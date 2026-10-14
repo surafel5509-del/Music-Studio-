@@ -134,10 +134,12 @@ fun Knob(
             val primary = MaterialTheme.colorScheme.primary
             val onSurface = MaterialTheme.colorScheme.onSurface
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = this.size.width
+                val h = this.size.height
                 val angle = (-135f + normalized * 270f) * kotlin.math.PI.toFloat() / 180f
-                val cx = size.width / 2
-                val cy = size.height / 2
-                val r = kotlin.math.min(size.width, size.height) / 2 - 4.dp.toPx()
+                val cx = w / 2f
+                val cy = h / 2f
+                val r = kotlin.math.min(w, h) / 2f - 4.dp.toPx()
                 drawCircle(primary.copy(alpha = 0.2f), radius = r*0.75f)
                 drawLine(
                     primary,
