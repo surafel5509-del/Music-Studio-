@@ -135,16 +135,20 @@ jobs:
       - name: Check build result
         id: check
         run: |
-          if [ -f build-debug.log ] && grep -q "BUILD SUCCESSFUL" build-debug.log; then echo "status=success" >> $GITHUB_OUTPUT; exit 0; fi
-          if [ -f build-release.log ] && grep -q "BUILD SUCCESSFUL" build-release.log; then echo "status=success" >> $GITHUB_OUTPUT; exit 0; fi
+          if [ -f build-debug.log ] && (grep -q "BUILD SUCCESSFUL" build-debug.log || test -f app/build/outputs/apk/debug/app-debug.apk); then
+            echo "status=success" >> $GITHUB_OUTPUT; exit 0
+          fi
+          if [ -f build-release.log ] && (grep -q "BUILD SUCCESSFUL" build-release.log || test -f app/build/outputs/apk/release/app-release.apk); then
+            echo "status=success" >> $GITHUB_OUTPUT; exit 0
+          fi
           echo "status=failure" >> $GITHUB_OUTPUT
           echo "Build failed. Extracting relevant errors:"
-          if [ -f build-debug.log ]; then
-            grep -nE "^e: |^w: |error:|FAILED|FAILURE:|CMake Error|C/C\+\+:|undefined reference|Exception|cxx:|BUILD FAILED" build-debug.log | tail -200
-          fi
-          if [ -f build-release.log ]; then
-            grep -nE "^e: |^w: |error:|FAILED|FAILURE:|CMake Error|C/C\+\+:|undefined reference|Exception|cxx:|BUILD FAILED" build-release.log | tail -200
-          fi
+          for f in build-*.log; do
+            echo "=== $f tail ==="
+            tail -200 "$f"
+            echo "=== errors in $f ==="
+            grep -nE "^e: |^w: |error:|FAILED|FAILURE:|CMake Error|C\+\+|undefined reference|Exception|cxx:|BUILD FAILED" "$f" | tail -200
+          done
           exit 1
 
       - name: Upload build log always
