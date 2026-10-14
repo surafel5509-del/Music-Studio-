@@ -92,16 +92,6 @@ jobs:
         if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
         run: ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log | tail -300
 
-      - name: Show build outputs
-        run: |
-          echo "=== outputs tree ==="
-          find app/build/outputs -type f 2>/dev/null || true
-          echo "=== all apk files ==="
-          find app/build -name "*.apk" -type f || true
-          echo "=== build tree ==="
-          ls app/build/ 2>/dev/null || true
-          find app/build/intermediates -maxdepth 3 -type d 2>&1 | head -40 || true
-
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
         run: ./gradlew assembleRelease --stacktrace 2>&1 | tail -300
@@ -112,10 +102,17 @@ jobs:
       - name: Locate APK
         id: apk
         run: |
+          set +e
+          echo "=== APKs ==="
+          find app/build -name "*.apk" -type f || true
           APK=$(find app/build -name "*.apk" -type f | head -1)
-          echo "APK=$APK"
-          echo "path=$APK" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename $APK)" >> "$GITHUB_OUTPUT"
+          if [ -z "$APK" ]; then
+            if [ -f app/build/outputs/apk/release/app-release.apk ]; then APK=app/build/outputs/apk/release/app-release.apk
+            else APK=app/build/outputs/apk/debug/app-debug.apk; fi
+          fi
+          echo "Using APK=$APK"
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "name=$(basename $APK)" >> $GITHUB_OUTPUT
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
