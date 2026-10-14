@@ -47,6 +47,7 @@ fun TimelineView(
     var dragOffset by remember { mutableFloatStateOf(0f) }
 
     val colors = WaveStudioTheme.colors
+    val surfaceColor = MaterialTheme.colorScheme.surface
     val trackPalette = listOf(colors.trackA, colors.trackB, colors.trackC, colors.trackD)
 
     val totalSeconds = totalFrames / sampleRate.coerceAtLeast(1f)
@@ -72,7 +73,7 @@ fun TimelineView(
         val w = size.width
         val h = size.height
         // Background
-        drawRect(MaterialTheme.colorScheme.surface)
+        drawRect(surfaceColor)
 
         // Time ruler background
         drawRect(colors.grid, size = Size(w, 24.dp.toPx()))

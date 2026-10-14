@@ -75,7 +75,7 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         val uri: Uri? = intent?.data
-        if (uri != null && (intent.action == Intent.ACTION_VIEW)) {
+        if (uri != null && (intent?.action == Intent.ACTION_VIEW)) {
             lifecycleScope.launch {
                 // Pass URI to editor via navigation arg (delegated to ProjectsViewModel)
             }

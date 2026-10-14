@@ -111,6 +111,8 @@ fun Knob(
     val normalized = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
     var startNormalized by remember { mutableFloatStateOf(normalized) }
     var startY by remember { mutableFloatStateOf(0f) }
+    val knobPrimary = MaterialTheme.colorScheme.primary
+    val knobCenter = MaterialTheme.colorScheme.onSurface
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
         Box(
@@ -135,14 +137,14 @@ fun Knob(
                 val cx = this.size.width / 2
                 val cy = this.size.height / 2
                 val r = this.size.minDimension / 2 - 4.dp.toPx()
-                drawCircle(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), radius = r*0.75f)
+                drawCircle(knobPrimary.copy(alpha = 0.2f), radius = r*0.75f)
                 drawLine(
-                    MaterialTheme.colorScheme.primary,
+                    knobPrimary,
                     Offset(cx, cy),
                     Offset(cx + kotlin.math.cos(angle)*r*0.8f, cy + kotlin.math.sin(angle)*r*0.8f),
                     strokeWidth = 3.dp.toPx()
                 )
-                drawCircle(MaterialTheme.colorScheme.onSurface, radius = 3.dp.toPx())
+                drawCircle(knobCenter, radius = 3.dp.toPx())
             }
         }
         label?.let {

@@ -100,6 +100,7 @@ class AudioEngineController @Inject constructor(
     fun setTrackSolo(id: Int, s: Boolean) = native.setTrackSolo(id, s)
     fun setTrackArm(id: Int, a: Boolean) = native.setTrackArm(id, a)
     fun addTrack(name: String): Int = native.addTrack(name)
+    fun loadWav(path: String): Int = native.loadWav(path)
     fun setMetronome(on: Boolean, bpm: Float, num: Int = 4, den: Int = 4) =
         native.setMetronome(on, bpm, num, den)
     fun setLoop(s: Long, e: Long, en: Boolean) = native.setLoop(s, e, en)
