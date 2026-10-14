@@ -104,8 +104,21 @@ object EditOps {
         updateClip(d, id) { it.copy(gainDb = gainDb.coerceIn(-60f, 24f)) }
 
     // ------------------------------------------------------------------ effects
+    /** On an aux bus the effect must be 100 % wet (the dry signal is already in the mix), so these start fully wet. */
+    private fun busDefaults(type: String): Map<String, Float> = when (type) {
+        "reverb" -> mapOf("wet" to 1f, "dry" to 0f)
+        "delay", "chorus", "flanger", "phaser", "distortion", "bitcrusher" -> mapOf("mix" to 1f)
+        else -> emptyMap()
+    }
+
+    /** [trackId]: >0 track, 0 master, -1..-MAX_BUSES aux bus (-(index+1)). Returns the new effect id, or -1 for an unknown target. */
     fun addEffect(d: ProjectDoc, trackId: Int, type: String): Pair<ProjectDoc, Int> {
         val id = d.nextId
+        if (trackId < 0) {
+            val bus = d.bus(-trackId - 1) ?: return d to -1
+            val e = EffectDoc(id = id, type = type, params = busDefaults(type))
+            return updateBus(d.copy(nextId = id + 1), bus.index) { it.copy(effects = it.effects + e) } to id
+        }
         val e = EffectDoc(id = id, type = type)
         return if (trackId == 0) d.copy(masterEffects = d.masterEffects + e, nextId = id + 1) to id
         else if (d.track(trackId) == null) d to -1
@@ -115,11 +128,17 @@ object EditOps {
     private fun mapEffect(d: ProjectDoc, effectId: Int, f: (EffectDoc) -> EffectDoc): ProjectDoc {
         if (d.masterEffects.any { it.id == effectId })
             return d.copy(masterEffects = d.masterEffects.map { if (it.id == effectId) f(it) else it })
+        d.buses.firstOrNull { bu -> bu.effects.any { it.id == effectId } }?.let { bu ->
+            return updateBus(d, bu.index) { b -> b.copy(effects = b.effects.map { if (it.id == effectId) f(it) else it }) }
+        }
         val t = d.tracks.firstOrNull { tr -> tr.effects.any { it.id == effectId } } ?: return d
         return updateTrack(d, t.id) { tr -> tr.copy(effects = tr.effects.map { if (it.id == effectId) f(it) else it }) }
     }
     fun removeEffect(d: ProjectDoc, effectId: Int): ProjectDoc {
         if (d.masterEffects.any { it.id == effectId }) return d.copy(masterEffects = d.masterEffects.filter { it.id != effectId })
+        d.buses.firstOrNull { bu -> bu.effects.any { it.id == effectId } }?.let { bu ->
+            return updateBus(d, bu.index) { b -> b.copy(effects = b.effects.filter { e -> e.id != effectId }) }
+        }
         val t = d.tracks.firstOrNull { tr -> tr.effects.any { it.id == effectId } } ?: return d
         return updateTrack(d, t.id) { it.copy(effects = it.effects.filter { e -> e.id != effectId }) }
     }
@@ -127,6 +146,42 @@ object EditOps {
         mapEffect(d, effectId) { it.copy(params = it.params + (paramId to value)) }
     fun setEffectBypass(d: ProjectDoc, effectId: Int, bypass: Boolean): ProjectDoc =
         mapEffect(d, effectId) { it.copy(bypass = bypass) }
+
+    // ------------------------------------------------------------------ aux buses and sends
+    fun updateBus(d: ProjectDoc, index: Int, f: (BusDoc) -> BusDoc): ProjectDoc {
+        val b = d.bus(index) ?: return d
+        val n = f(b)
+        if (n == b) return d
+        return d.copy(buses = d.buses.map { if (it.index == index) n else it })
+    }
+    /** Adds a bus in the lowest free slot. Returns its index, or -1 when all [MAX_BUSES] are in use. */
+    fun addBus(d: ProjectDoc, name: String? = null): Pair<ProjectDoc, Int> {
+        val index = (0 until MAX_BUSES).firstOrNull { d.bus(it) == null } ?: return d to -1
+        val n = name?.trim()?.takeIf { it.isNotEmpty() }?.take(24) ?: "Aux ${index + 1}"
+        return d.copy(buses = (d.buses + BusDoc(index, n)).sortedBy { it.index }) to index
+    }
+    /** Removes a bus, its effects, and every track's send to it. */
+    fun removeBus(d: ProjectDoc, index: Int): ProjectDoc {
+        if (d.bus(index) == null) return d
+        return d.copy(
+            buses = d.buses.filter { it.index != index },
+            tracks = d.tracks.map { if (index in it.sends) it.copy(sends = it.sends - index) else it }
+        )
+    }
+    fun renameBus(d: ProjectDoc, index: Int, name: String): ProjectDoc {
+        val n = name.trim().take(24)
+        return if (n.isEmpty()) d else updateBus(d, index) { it.copy(name = n) }
+    }
+    fun setBusLevel(d: ProjectDoc, index: Int, level: Float): ProjectDoc =
+        updateBus(d, index) { it.copy(level = (if (level.isNaN()) 1f else level).coerceIn(0f, 2f)) }
+    /** Sets a track's send level into [bus]; 0 removes the send. Unknown track/bus: unchanged. */
+    fun setTrackSend(d: ProjectDoc, trackId: Int, bus: Int, level: Float): ProjectDoc {
+        if (d.bus(bus) == null) return d
+        val lv = (if (level.isNaN()) 0f else level).coerceIn(0f, 2f)
+        return updateTrack(d, trackId) { t ->
+            if (lv <= 0f) t.copy(sends = t.sends - bus) else t.copy(sends = t.sends + (bus to lv))
+        }
+    }
 
     // ------------------------------------------------------------------ markers
     fun addMarker(d: ProjectDoc, frame: Long, name: String? = null): Pair<ProjectDoc, Int> {

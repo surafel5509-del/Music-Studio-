@@ -33,6 +33,8 @@ class NativeAudioEngine {
     external fun nativeSetTrackVolume(id: Int, v: Float)
     external fun nativeSetTrackPan(id: Int, v: Float)
     external fun nativeSetTrackMute(id: Int, m: Boolean)
+    external fun nativeSetTrackSend(id: Int, bus: Int, level: Float)
+    external fun nativeSetBusLevel(bus: Int, level: Float)
     external fun nativeSetTrackSolo(id: Int, s: Boolean)
     external fun nativeSetClip(id: Int, trackId: Int, path: String, start: Long, offset: Long, length: Long,
                                gainDb: Float, fadeIn: Long, fadeOut: Long): Int

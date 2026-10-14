@@ -60,7 +60,8 @@ import javax.inject.Inject
 @HiltViewModel
 class EffectsViewModel @Inject constructor(val session: ProjectSession) : ViewModel() {
     val doc = session.doc
-    fun chain(d: ProjectDoc, trackId: Int): List<EffectDoc> = if (trackId == 0) d.masterEffects else d.track(trackId)?.effects ?: emptyList()
+    fun chain(d: ProjectDoc, trackId: Int): List<EffectDoc> =
+        if (trackId == 0) d.masterEffects else if (trackId < 0) d.bus(-trackId - 1)?.effects ?: emptyList() else d.track(trackId)?.effects ?: emptyList()
     fun add(trackId: Int, type: String) { session.edit("Add effect") { EditOps.addEffect(it, trackId, type).first } }
     fun remove(effectId: Int) { session.edit("Remove effect") { EditOps.removeEffect(it, effectId) } }
     fun setBypass(effectId: Int, bypass: Boolean) { session.edit("Bypass") { EditOps.setEffectBypass(it, effectId, bypass) } }
@@ -73,7 +74,7 @@ class EffectsViewModel @Inject constructor(val session: ProjectSession) : ViewMo
 
 fun effectTitle(type: String) = type.replace('_', ' ').replaceFirstChar { it.uppercase() }
 
-/** Insert effects of a track (or the master bus when [trackId] is 0). Parameters come from the native effect itself. */
+/** Insert effects of a track (or the master bus when [trackId] is 0, or an aux bus when it is -(index+1)). Parameters come from the native effect itself. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltViewModel()) {
@@ -82,7 +83,7 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltV
     var selectedId by remember { mutableStateOf<Int?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
     val selected = chain.firstOrNull { it.id == selectedId } ?: chain.firstOrNull()
-    val title = if (trackId == 0) "Master" else doc.track(trackId)?.name ?: "Track"
+    val title = if (trackId == 0) "Master" else if (trackId < 0) doc.bus(-trackId - 1)?.name ?: "Bus" else doc.track(trackId)?.name ?: "Track"
 
     Scaffold(
         topBar = {

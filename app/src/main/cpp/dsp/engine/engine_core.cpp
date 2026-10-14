@@ -26,6 +26,7 @@ EngineCore::EngineCore(std::shared_ptr<MediaLibrary> media, float engine_rate, f
     spectrum_.init(2048, engine_rate_);
     analysis_tmp_.assign(8192, 0.f);
     gain_l_.fill(1.f); gain_r_.fill(1.f);
+    for (int b = 0; b < kMaxBuses; ++b) { bus_level_[b].store(1.f); bus_gain_cur_[b] = 1.f; bus_idle_[b] = 1 << 30; }
     {
         std::lock_guard<std::mutex> lk(mu_);
         publish_locked();
@@ -70,17 +71,29 @@ std::vector<EngineCore::MEffect>& EngineCore::chain_of(int track_id, bool* ok) {
     static std::vector<MEffect> dummy;
     if (ok) *ok = true;
     if (track_id == 0) return master_fx_;
+    if (track_id < 0) {
+        const int b = -track_id - 1;
+        if (b >= kMaxBuses) { if (ok) *ok = false; return dummy; }
+        return bus_fx_[b];
+    }
     MTrack* t = find_track(track_id);
     if (!t) { if (ok) *ok = false; return dummy; }
     return t->fx;
 }
 
-EngineCore::MEffect* EngineCore::find_effect(int id, MTrack** owner, int* idx) {
-    for (size_t i = 0; i < master_fx_.size(); ++i)
-        if (master_fx_[i].id == id) { if (owner) *owner = nullptr; if (idx) *idx = (int)i; return &master_fx_[i]; }
+EngineCore::MEffect* EngineCore::find_effect(int id, MTrack** owner, int* idx, std::vector<MEffect>** chain, int* owner_id) {
+    auto hit = [&](std::vector<MEffect>& c, size_t i, MTrack* o, int oid) {
+        if (owner) *owner = o;
+        if (idx) *idx = (int)i;
+        if (chain) *chain = &c;
+        if (owner_id) *owner_id = oid;
+        return &c[i];
+    };
+    for (size_t i = 0; i < master_fx_.size(); ++i) if (master_fx_[i].id == id) return hit(master_fx_, i, nullptr, 0);
+    for (int b = 0; b < kMaxBuses; ++b)
+        for (size_t i = 0; i < bus_fx_[b].size(); ++i) if (bus_fx_[b][i].id == id) return hit(bus_fx_[b], i, nullptr, -(b + 1));
     for (auto& t : tracks_)
-        for (size_t i = 0; i < t.fx.size(); ++i)
-            if (t.fx[i].id == id) { if (owner) *owner = &t; if (idx) *idx = (int)i; return &t.fx[i]; }
+        for (size_t i = 0; i < t.fx.size(); ++i) if (t.fx[i].id == id) return hit(t.fx, i, &t, t.id);
     return nullptr;
 }
 
@@ -115,6 +128,7 @@ void EngineCore::publish_locked() {
         s->tracks.push_back(std::move(st));
     }
     make_chain(master_fx_, s->master);
+    for (int b = 0; b < kMaxBuses; ++b) make_chain(bus_fx_[b], s->bus[b]);
     const int64_t ls = tl_to_engine(loop_s_tl_), le = tl_to_engine(loop_e_tl_);
     s->loop = loop_en_ && le > ls + 16;
     s->loop_s = ls; s->loop_e = le;
@@ -137,6 +151,7 @@ bool EngineCore::add_track(int id) {
     MTrack t; t.id = id; t.slot = slot;
     tracks_.push_back(t);
     TrackState& ts = tstate_[slot];
+    for (int b = 0; b < kMaxBuses; ++b) { ts.send[b].store(0.f); send_cur_[slot][b] = 0.f; }
     ts.vol = 1.f; ts.pan = 0.f; ts.mute = false; ts.solo = false; ts.peak_l = 0.f; ts.peak_r = 0.f; ts.fresh = true;
     publish_locked();
     return true;
@@ -176,6 +191,15 @@ void EngineCore::set_track_mute(int id, bool m) {
 void EngineCore::set_track_solo(int id, bool s) {
     std::lock_guard<std::mutex> lk(mu_);
     if (MTrack* t = find_track(id)) { t->solo = s; tstate_[t->slot].solo.store(s); }
+}
+void EngineCore::set_track_send(int id, int bus, float level) {
+    if (bus < 0 || bus >= kMaxBuses) return;
+    std::lock_guard<std::mutex> lk(mu_);
+    if (MTrack* t = find_track(id)) { t->send[bus] = clampf(level == level ? level : 0.f, 0.f, 2.f); tstate_[t->slot].send[bus].store(t->send[bus]); }
+}
+void EngineCore::set_bus_level(int bus, float level) {
+    if (bus < 0 || bus >= kMaxBuses) return;
+    bus_level_[bus].store(clampf(level == level ? level : 1.f, 0.f, 2.f));
 }
 void EngineCore::set_master_volume(float v) { master_vol_.store(clampf(v == v ? v : 1.f, 0.f, 2.f)); }
 
@@ -257,9 +281,9 @@ int EngineCore::add_effect(int track_id, const std::string& type, int forced_id,
 
 bool EngineCore::remove_effect(int effect_id) {
     std::lock_guard<std::mutex> lk(mu_);
-    MTrack* owner = nullptr; int idx = 0;
-    if (!find_effect(effect_id, &owner, &idx)) return false;
-    auto& chain = owner ? owner->fx : master_fx_;
+    int idx = 0; std::vector<MEffect>* cp = nullptr;
+    if (!find_effect(effect_id, nullptr, &idx, &cp)) return false;
+    auto& chain = *cp;
     chain.erase(chain.begin() + idx);
     publish_locked();
     return true;
@@ -267,9 +291,9 @@ bool EngineCore::remove_effect(int effect_id) {
 
 bool EngineCore::move_effect(int effect_id, int new_index) {
     std::lock_guard<std::mutex> lk(mu_);
-    MTrack* owner = nullptr; int idx = 0;
-    if (!find_effect(effect_id, &owner, &idx)) return false;
-    auto& chain = owner ? owner->fx : master_fx_;
+    int idx = 0; std::vector<MEffect>* cp = nullptr;
+    if (!find_effect(effect_id, nullptr, &idx, &cp)) return false;
+    auto& chain = *cp;
     new_index = std::max(0, std::min(new_index, (int)chain.size() - 1));
     if (new_index == idx) return true;
     MEffect e = std::move(chain[idx]);
@@ -302,11 +326,11 @@ bool EngineCore::set_effect_bypass(int effect_id, bool bypass) {
 bool EngineCore::get_effect_info(int effect_id, EffectInfo& out) const {
     std::lock_guard<std::mutex> lk(mu_);
     auto* self = const_cast<EngineCore*>(this);
-    MTrack* owner = nullptr; int idx = 0;
-    MEffect* e = self->find_effect(effect_id, &owner, &idx);
+    int idx = 0, owner_id = 0;
+    MEffect* e = self->find_effect(effect_id, nullptr, &idx, nullptr, &owner_id);
     if (!e) return false;
     out = EffectInfo();
-    out.id = e->id; out.track_id = owner ? owner->id : 0; out.type = e->type;
+    out.id = e->id; out.track_id = owner_id; out.type = e->type;
     out.name = e->fx->name(); out.bypass = e->bypass;
     for (int i = 0; i < e->fx->param_count(); ++i) {
         const auto& p = e->fx->param(i);
@@ -321,7 +345,11 @@ std::vector<int> EngineCore::list_effects(int track_id) const {
     std::lock_guard<std::mutex> lk(mu_);
     std::vector<int> ids;
     const std::vector<MEffect>* chain = &master_fx_;
-    if (track_id != 0) {
+    if (track_id < 0) {
+        const int b = -track_id - 1;
+        if (b >= kMaxBuses) return ids;
+        chain = &bus_fx_[b];
+    } else if (track_id != 0) {
         const MTrack* t = find_track(track_id);
         if (!t) return ids;
         chain = &t->fx;
@@ -431,7 +459,9 @@ std::unique_ptr<EngineCore> EngineCore::clone(float new_rate) const {
         dst->add_track(t.id);
         dst->set_track_volume(t.id, t.vol); dst->set_track_pan(t.id, t.pan);
         dst->set_track_mute(t.id, t.mute); dst->set_track_solo(t.id, t.solo);
+        for (int b = 0; b < kMaxBuses; ++b) dst->set_track_send(t.id, b, t.send[b]);
     }
+    for (int b = 0; b < kMaxBuses; ++b) dst->set_bus_level(b, bus_level_[b].load());
     auto copy_chain = [&](int track_id, const std::vector<MEffect>& chain) {
         for (auto& e : chain) {
             const int id = dst->add_effect(track_id, e.type, e.id);
@@ -443,6 +473,7 @@ std::unique_ptr<EngineCore> EngineCore::clone(float new_rate) const {
         }
     };
     copy_chain(0, master_fx_);
+    for (int b = 0; b < kMaxBuses; ++b) copy_chain(-(b + 1), bus_fx_[b]);
     for (auto& t : tracks_) copy_chain(t.id, t.fx);
     for (auto& c : clips_) dst->set_clip(c.p);
     return dst;
@@ -486,7 +517,9 @@ void EngineCore::apply_params() {
             for (auto& s : t.fx) if (s.id == m.effect_id) { s.fx->set_param(m.index, m.value); done = true; break; }
             if (done) break;
         }
-        if (!done) for (auto& s : current_->master) if (s.id == m.effect_id) { s.fx->set_param(m.index, m.value); break; }
+        if (!done) for (auto& s : current_->master) if (s.id == m.effect_id) { s.fx->set_param(m.index, m.value); done = true; break; }
+        for (int bi = 0; !done && bi < kMaxBuses; ++bi)
+            for (auto& s : current_->bus[bi]) if (s.id == m.effect_id) { s.fx->set_param(m.index, m.value); done = true; break; }
     }
 }
 
@@ -637,6 +670,9 @@ int EngineCore::render_chunk_planned(float* out, int n, const float* in, int in_
         for (auto& t : snap->tracks) if (tstate_[t.slot].solo.load(std::memory_order_relaxed)) { solo_any = true; break; }
         float* const tL = trkL_.data();
         float* const tR = trkR_.data();
+        float* const pfL = pfL_.data();
+        float* const pfR = pfR_.data();
+        bool bus_fed[kMaxBuses] = {false, false, false, false};
         for (auto& t : snap->tracks) {
             TrackState& ts = tstate_[t.slot];
             const bool audible = !ts.mute.load(std::memory_order_relaxed) &&
@@ -648,7 +684,8 @@ int EngineCore::render_chunk_planned(float* out, int n, const float* in, int in_
             const float tgr = vol * (pan < 0.f ? 1.f + pan : 1.f);
             float& cgl = gain_l_[t.slot];
             float& cgr = gain_r_[t.slot];
-            if (ts.fresh.exchange(false, std::memory_order_relaxed) || snap_gains_) { cgl = tgl; cgr = tgr; }
+            const bool snapped = ts.fresh.exchange(false, std::memory_order_relaxed) || snap_gains_;
+            if (snapped) { cgl = tgl; cgr = tgr; }
             if (tgl == 0.f && tgr == 0.f && cgl < 1e-5f && cgr < 1e-5f) { cgl = cgr = 0.f; continue; }
             std::fill(tL, tL + n, 0.f);
             std::fill(tR, tR + n, 0.f);
@@ -660,11 +697,43 @@ int EngineCore::render_chunk_planned(float* out, int n, const float* in, int in_
                 gl += dl; gr += dr;
                 const float a = tL[i] * gl, b = tR[i] * gr;
                 L[i] += a; R[i] += b;
+                pfL[i] = a; pfR[i] = b;
                 pl = std::max(pl, std::fabs(a)); pr = std::max(pr, std::fabs(b));
             }
             cgl = tgl; cgr = tgr;
+            // aux sends (post-fader, post-pan; a muted/silent track sends nothing)
+            for (int bi = 0; bi < kMaxBuses; ++bi) {
+                const float tgt = ts.send[bi].load(std::memory_order_relaxed);
+                float& cs = send_cur_[t.slot][bi];
+                if (snapped) cs = tgt;
+                if (tgt == 0.f && cs < 1e-5f) { cs = 0.f; continue; }
+                float* bl = busL_[bi].data(); float* br = busR_[bi].data();
+                if (!bus_fed[bi]) { std::fill(bl, bl + n, 0.f); std::fill(br, br + n, 0.f); bus_fed[bi] = true; }
+                const float ds = (tgt - cs) / (float)n;
+                float s = cs;
+                for (int i = 0; i < n; ++i) { s += ds; bl[i] += pfL[i] * s; br[i] += pfR[i] * s; }
+                cs = tgt;
+            }
             if (pl > ts.peak_l.load(std::memory_order_relaxed)) ts.peak_l.store(pl, std::memory_order_relaxed);
             if (pr > ts.peak_r.load(std::memory_order_relaxed)) ts.peak_r.store(pr, std::memory_order_relaxed);
+        }
+        // aux buses: effect chain on the summed sends, then the return level into the master mix.
+        // A bus that is no longer fed keeps running (reverb/delay tails) until it has been idle for 6 s.
+        const int64_t idle_limit = (int64_t)(6.0 * engine_rate_);
+        for (int bi = 0; bi < kMaxBuses; ++bi) {
+            float* bl = busL_[bi].data(); float* br = busR_[bi].data();
+            if (bus_fed[bi]) bus_idle_[bi] = 0;
+            else {
+                if (snap->bus[bi].empty() || bus_idle_[bi] >= idle_limit) continue;
+                std::fill(bl, bl + n, 0.f); std::fill(br, br + n, 0.f);
+                bus_idle_[bi] += n;
+            }
+            run_chain(snap->bus[bi], bl, br, n);
+            const float tg = bus_level_[bi].load(std::memory_order_relaxed);
+            const float d = (tg - bus_gain_cur_[bi]) / (float)n;
+            float g = bus_gain_cur_[bi];
+            for (int i = 0; i < n; ++i) { g += d; L[i] += bl[i] * g; R[i] += br[i] * g; }
+            bus_gain_cur_[bi] = tg;
         }
         run_chain(snap->master, L, R, n);
         snap_gains_ = false;

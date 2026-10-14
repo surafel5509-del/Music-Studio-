@@ -19,10 +19,12 @@ object ProjectCodec {
         "beatUnit" to d.beatUnit,
         "masterVolume" to d.masterVolume,
         "masterEffects" to d.masterEffects.map(::effectMap),
+        "buses" to d.buses.map { bu -> linkedMapOf<String, Any?>("index" to bu.index, "name" to bu.name, "level" to bu.level, "effects" to bu.effects.map(::effectMap)) },
         "tracks" to d.tracks.map { t ->
             linkedMapOf<String, Any?>(
                 "id" to t.id, "name" to t.name, "color" to t.color, "volume" to t.volume, "pan" to t.pan,
-                "mute" to t.mute, "solo" to t.solo, "arm" to t.arm, "effects" to t.effects.map(::effectMap)
+                "mute" to t.mute, "solo" to t.solo, "arm" to t.arm, "effects" to t.effects.map(::effectMap),
+                "sends" to LinkedHashMap<String, Any?>().also { m -> t.sends.toSortedMap().forEach { (k, v) -> m[k.toString()] = v } }
             )
         },
         "clips" to d.clips.map { c ->
@@ -64,9 +66,16 @@ object ProjectCodec {
                 id = t.int("id"), name = t.str("name", "Track"), color = t.long("color", 0xFF4A90E2L),
                 volume = t.float("volume", 1f).coerceIn(0f, 4f), pan = t.float("pan", 0f).coerceIn(-1f, 1f),
                 mute = t.bool("mute"), solo = t.bool("solo"), arm = t.bool("arm"),
-                effects = t["effects"].asList().map { effectFrom(it.asObj()) }
+                effects = t["effects"].asList().map { effectFrom(it.asObj()) },
+                sends = t["sends"].asObj().mapNotNull { (k, v) ->
+                    val bi = k.toIntOrNull(); val lv = (v as? Number)?.toFloat()
+                    if (bi != null && bi in 0 until MAX_BUSES && lv != null && lv > 0f) bi to lv.coerceAtMost(2f) else null
+                }.toMap()
             )
         }.filter { it.id > 0 }
+        val buses = m["buses"].asList().map { it.asObj() }.map { bu ->
+            BusDoc(bu.int("index", -1), bu.str("name", "Aux"), bu.float("level", 1f).coerceIn(0f, 2f), bu["effects"].asList().map { effectFrom(it.asObj()) })
+        }.filter { it.index in 0 until MAX_BUSES }.distinctBy { it.index }.sortedBy { it.index }
         val clips = m["clips"].asList().map { it.asObj() }.map { c ->
             val len = c.long("length").coerceAtLeast(0)
             val off = c.long("offset").coerceAtLeast(0)
@@ -82,7 +91,7 @@ object ProjectCodec {
         val punch = m["punch"].asObj()
         val keptClips = clips   // clips whose track is missing are kept (not silently deleted); the engine just skips them
         val maxId = (tracks.map { it.id } + keptClips.map { it.id } +
-            tracks.flatMap { t -> t.effects.map { it.id } } + m["masterEffects"].asList().map { it.asObj().int("id") } +
+            tracks.flatMap { t -> t.effects.map { it.id } } + buses.flatMap { bu -> bu.effects.map { it.id } } + m["masterEffects"].asList().map { it.asObj().int("id") } +
             m["markers"].asList().map { it.asObj().int("id") }).maxOrNull() ?: 0
         return ProjectDoc(
             version = PROJECT_FORMAT_VERSION,
@@ -92,6 +101,7 @@ object ProjectCodec {
             beatUnit = m.int("beatUnit", 4).let { if (it in setOf(2, 4, 8, 16)) it else 4 },
             masterVolume = m.float("masterVolume", 1f).coerceIn(0f, 2f),
             masterEffects = m["masterEffects"].asList().map { effectFrom(it.asObj()) },
+            buses = buses,
             tracks = tracks,
             clips = keptClips,
             markers = m["markers"].asList().map { it.asObj() }.map { MarkerDoc(it.int("id"), it.long("frame"), it.str("name")) },

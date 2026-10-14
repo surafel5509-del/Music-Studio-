@@ -13,6 +13,7 @@ import com.wavestudio.app.engine.AudioEngineController
 import com.wavestudio.app.engine.TransportState
 import com.wavestudio.app.project.ClipDoc
 import com.wavestudio.app.project.EditOps
+import com.wavestudio.app.project.MAX_BUSES
 import com.wavestudio.app.project.ProjectDoc
 import com.wavestudio.app.project.TIMELINE_RATE
 import com.wavestudio.app.project.TrackDoc
@@ -147,6 +148,10 @@ class EditorViewModel @Inject constructor(
     fun toggleMute(id: Int) { session.edit("Mute") { EditOps.updateTrack(it, id) { t -> t.copy(mute = !t.mute) } } }
     fun toggleSolo(id: Int) { session.edit("Solo") { EditOps.updateTrack(it, id) { t -> t.copy(solo = !t.solo) } } }
     fun toggleArm(id: Int) { _armedTrack.value = if (_armedTrack.value == id) null else id }
+    fun addBus() { if (!session.edit("Add aux bus") { EditOps.addBus(it).first }) say("All $MAX_BUSES aux buses are in use") }
+    fun removeBus(index: Int) { session.edit("Remove aux bus") { EditOps.removeBus(it, index) } }
+    fun setBusLevel(index: Int, v: Float) { session.edit("Bus level", "bus:$index") { EditOps.setBusLevel(it, index, v) } }
+    fun setTrackSend(trackId: Int, bus: Int, v: Float) { session.edit("Send level", "send:$trackId:$bus") { EditOps.setTrackSend(it, trackId, bus, v) } }
     fun setMasterVolume(v: Float) { session.edit("Master volume", "master") { it.copy(masterVolume = v.coerceIn(0f, 2f)) } }
 
     // ------------------------------------------------------------------ clips

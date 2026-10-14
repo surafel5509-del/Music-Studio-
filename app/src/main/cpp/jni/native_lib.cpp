@@ -240,5 +240,8 @@ JNI(jstring, nativeExport, jstring path, jint format, jint sampleRate, jint bitD
     g_export_running = false;
     return to_jstring(env, j);
 }
+JNI(void, nativeSetTrackSend, jint id, jint bus, jfloat level) { C()->set_track_send(id, bus, level); }
+JNI(void, nativeSetBusLevel, jint bus, jfloat level) { C()->set_bus_level(bus, level); }
+
 JNI(jfloat, nativeExportProgress) { return g_export_progress.load(); }
 JNI(void, nativeCancelExport) { g_export_cancel = true; }

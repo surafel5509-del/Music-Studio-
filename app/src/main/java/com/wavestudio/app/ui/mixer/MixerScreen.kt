@@ -37,7 +37,9 @@ fun MixerScreen(onBack: () -> Unit, onOpenEffects: (Int) -> Unit, vm: EditorView
                 tracks = doc.tracks, trackMeters = trackMeters, master = meters, masterVolume = doc.masterVolume,
                 onVolume = vm::setTrackVolume, onPan = vm::setTrackPan,
                 onMute = vm::toggleMute, onSolo = vm::toggleSolo,
-                onMasterVolume = vm::setMasterVolume, onEffects = onOpenEffects
+                onMasterVolume = vm::setMasterVolume, onEffects = onOpenEffects,
+                buses = doc.buses, onSend = vm::setTrackSend, onBusLevel = vm::setBusLevel,
+                onAddBus = vm::addBus, onRemoveBus = vm::removeBus
             )
         }
     }

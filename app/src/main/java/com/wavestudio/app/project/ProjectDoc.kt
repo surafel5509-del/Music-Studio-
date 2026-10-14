@@ -10,6 +10,8 @@ package com.wavestudio.app.project
  */
 const val TIMELINE_RATE = 48_000
 const val PROJECT_FORMAT_VERSION = 1
+/** Number of aux send buses the engine provides. */
+const val MAX_BUSES = 4
 
 data class EffectDoc(
     val id: Int,
@@ -28,8 +30,13 @@ data class TrackDoc(
     val mute: Boolean = false,
     val solo: Boolean = false,
     val arm: Boolean = false,
-    val effects: List<EffectDoc> = emptyList()
+    val effects: List<EffectDoc> = emptyList(),
+    /** Aux send levels (post-fader) by bus index; a missing entry means no send. Linear 0..2. */
+    val sends: Map<Int, Float> = emptyMap()
 )
+
+/** An aux send bus: the summed sends go through [effects] and come back into the master mix at [level]. */
+data class BusDoc(val index: Int, val name: String, val level: Float = 1f, val effects: List<EffectDoc> = emptyList())
 
 data class ClipDoc(
     val id: Int,
@@ -59,6 +66,7 @@ data class ProjectDoc(
     val beatUnit: Int = 4,
     val masterVolume: Float = 1f,
     val masterEffects: List<EffectDoc> = emptyList(),
+    val buses: List<BusDoc> = emptyList(),
     val tracks: List<TrackDoc> = emptyList(),
     val clips: List<ClipDoc> = emptyList(),
     val markers: List<MarkerDoc> = emptyList(),
@@ -77,6 +85,7 @@ data class ProjectDoc(
 ) {
     val endFrame: Long get() = clips.maxOfOrNull { it.endFrame } ?: 0L
     fun track(id: Int): TrackDoc? = tracks.firstOrNull { it.id == id }
+    fun bus(index: Int): BusDoc? = buses.firstOrNull { it.index == index }
     fun clip(id: Int): ClipDoc? = clips.firstOrNull { it.id == id }
     val framesPerBeat: Double get() = TIMELINE_RATE * 60.0 / bpm.coerceAtLeast(1f)
 }

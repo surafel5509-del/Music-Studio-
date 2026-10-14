@@ -10,7 +10,7 @@ Compose UI  ──►  ViewModels  ──►  ProjectSession (singleton, Hilt)  
 ```
 
 ## Source of truth: `project/` (pure Kotlin, JVM-testable)
-* `ProjectDoc` – immutable tracks, clips, effects, loop, tempo; positions are frames on a fixed 48 kHz timeline.
+* `ProjectDoc` – immutable tracks, clips, effects, aux buses and per-track sends, markers, punch range, loop, tempo; positions are frames on a fixed 48 kHz timeline.
 * `ProjectCodec` / `Json` – versioned JSON (`formatVersion`), with a migration hook; unknown keys are ignored.
 * `ProjectStore(dir)` – atomic save (write temp → fsync → rename, previous file kept as `project.json.bak`), load with
   fallback to the backup, orphaned-take recovery (a take WAV with its `.take` sidecar that no clip references is
@@ -28,7 +28,12 @@ Compose UI  ──►  ViewModels  ──►  ProjectSession (singleton, Hilt)  
 * `media` – whole-file decode into RAM with a memory budget (WAV 8/16/24/32-bit PCM and 32-bit float, EXTENSIBLE).
 * `recorder` – audio callback pushes into a ring; a writer thread streams to a WAV file; a sidecar lets a killed app
   recover the take; dropped frames are counted and reported.
-* `offline_export` – renders the same engine core faster than real time to 16/24-bit PCM or 32-bit float WAV, any of
+* Aux buses: `kMaxBuses = 4`. Track sends are post-fader/post-pan and ramped per block; each bus has its own effect
+  chain (addressed through the effect API with track id −1..−4) and a return level; bus output is summed before the master
+  chain. An unfed bus keeps processing until idle for 6 s so reverb/delay tails ring out. `clone()` copies sends and bus
+  chains, so export matches playback (tested to 1e-5). Effect parameter changes (`apply_params`) must search every chain type.
+* `flac_stream_writer` – FLAC encoder (fixed predictors, Rice partitions, stereo decorrelation, CRC, MD5); 16/24-bit only.
+* `offline_export` – renders the same engine core faster than real time to 16/24-bit PCM or 32-bit float WAV (or FLAC), any of
   the supported rates, mono/stereo, TPDF dither (applied for 16-bit output only); reports peak, LUFS and clipping; cancellable.
 * `audio_engine` (`AudioDevice`) – AAudio output/input, error callback reopens on a separate thread, rate clone.
 * Effects (all in `dsp/effects`, created by type id): gain, eq, filter, compressor, limiter, gate, deesser, reverb,

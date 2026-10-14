@@ -36,6 +36,8 @@ interface EngineApi {
     fun setLoop(start: Long, end: Long, enabled: Boolean)
     fun setMetronome(on: Boolean, bpm: Float, beats: Int)
     fun setCountIn(bars: Int)
+    fun setTrackSend(id: Int, bus: Int, level: Float)
+    fun setBusLevel(bus: Int, level: Float)
     fun setPunch(enabled: Boolean, inFrame: Long, outFrame: Long)
 }
 
@@ -105,9 +107,24 @@ class EngineSync(private val api: EngineApi, private val mediaPath: (String) -> 
                 if (o.mute != t.mute) api.setTrackMute(t.id, t.mute)
                 if (o.solo != t.solo) api.setTrackSolo(t.id, t.solo)
             }
+            for (bi in 0 until MAX_BUSES) {
+                val nv = t.sends[bi] ?: 0f
+                if (nv != (o?.sends?.get(bi) ?: 0f)) api.setTrackSend(t.id, bi, nv)
+            }
             diffEffects(t.id, o?.effects ?: emptyList(), t.effects)
         }
         diffEffects(0, old.masterEffects, doc.masterEffects)
+
+        // aux buses
+        for (ob in old.buses) if (doc.bus(ob.index) == null) {
+            ob.effects.forEach { e -> fx.remove(e.id)?.let { api.removeEffect(it.nativeId) } }
+            api.setBusLevel(ob.index, 1f)
+        }
+        for (nb in doc.buses) {
+            val ob = old.bus(nb.index)
+            if (nb.level != (ob?.level ?: 1f)) api.setBusLevel(nb.index, nb.level)
+            diffEffects(-(nb.index + 1), ob?.effects ?: emptyList(), nb.effects)
+        }
 
         // clips
         val newClips = doc.clips.associateBy { it.id }

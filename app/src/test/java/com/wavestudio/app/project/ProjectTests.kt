@@ -44,6 +44,10 @@ class ProjectCodecTest {
         d = EditOps.addClip(d, t, "media/a.wav", "a", 48000, 96000, 144000).first
         d = EditOps.addEffect(d, t, "eq").first
         d = EditOps.addEffect(d, 0, "limiter").first
+        d = EditOps.addBus(d, "Verb").first
+        d = EditOps.addEffect(d, -1, "reverb").first
+        d = EditOps.setTrackSend(d, t, 0, 0.4f)
+        d = EditOps.setBusLevel(d, 0, 0.75f)
         val fx = d.tracks[0].effects[0].id
         d = EditOps.setEffectParam(d, fx, "b1_gain", 3.5f)
         return d.copy(loopStart = 10, loopEnd = 99999, loopEnabled = true, metronome = true, countInBars = 2,
@@ -343,6 +347,8 @@ class FakeEngine : EngineApi {
     override fun setLoop(start: Long, end: Long, enabled: Boolean) { calls += "loop $start $end $enabled" }
     override fun setMetronome(on: Boolean, bpm: Float, beats: Int) { calls += "metro $on $bpm $beats" }
     override fun setCountIn(bars: Int) { calls += "countIn $bars" }
+    override fun setTrackSend(id: Int, bus: Int, level: Float) { calls += "send $id $bus $level" }
+    override fun setBusLevel(bus: Int, level: Float) { calls += "busLevel $bus $level" }
     override fun setPunch(enabled: Boolean, inFrame: Long, outFrame: Long) { calls += "punch $enabled $inFrame $outFrame" }
 }
 
@@ -538,5 +544,87 @@ class ProjectFilesTest {
         assertTrue(ProjectFiles.deleteProject(src)); assertFalse(src.exists())
         assertTrue(ProjectFiles.deleteProject(src))
         root.deleteRecursively()
+    }
+}
+
+class AuxBusTest {
+    private fun base(): Triple<ProjectDoc, Int, Int> {
+        var d = ProjectDoc()
+        val (d1, t) = EditOps.addTrack(d); d = d1
+        val (d2, b) = EditOps.addBus(d); d = d2
+        return Triple(d, t, b)
+    }
+
+    @Test fun busesFillTheLowestFreeSlotAndStopAtTheLimit() {
+        var d = ProjectDoc()
+        for (i in 0 until MAX_BUSES) { val (n, idx) = EditOps.addBus(d); assertEquals(i, idx); d = n }
+        assertEquals("Aux 1", d.buses[0].name)
+        val (full, idx) = EditOps.addBus(d); assertEquals(-1, idx); assertSame(d, full)
+        d = EditOps.removeBus(d, 1)
+        assertEquals(1, EditOps.addBus(d, "  ").second)                 // freed slot is reused; blank name falls back to default
+    }
+
+    @Test fun sendsAreValidatedAndZeroRemovesThem() {
+        val (d, t, b) = base()
+        val d1 = EditOps.setTrackSend(d, t, b, 0.5f)
+        assertEquals(0.5f, d1.track(t)!!.sends[b]!!, 0f)
+        assertSame(d, EditOps.setTrackSend(d, t, 3, 0.5f))                 // bus 3 does not exist
+        assertSame(d, EditOps.setTrackSend(d, 999, b, 0.5f))               // unknown track
+        assertEquals(2f, EditOps.setTrackSend(d, t, b, 9f).track(t)!!.sends[b]!!, 0f)   // clamped
+        assertTrue(EditOps.setTrackSend(d1, t, b, 0f).track(t)!!.sends.isEmpty())
+        assertSame(d1, EditOps.setTrackSend(d1, t, b, 0.5f))               // no change -> same instance
+    }
+
+    @Test fun removingABusRemovesItsSendsAndEffects() {
+        var (d, t, b) = base()
+        d = EditOps.setTrackSend(d, t, b, 0.5f)
+        d = EditOps.addEffect(d, -(b + 1), "delay").first
+        d = EditOps.removeBus(d, b)
+        assertTrue(d.buses.isEmpty()); assertTrue(d.track(t)!!.sends.isEmpty())
+        assertEquals(-1, EditOps.addEffect(d, -1, "reverb").second)        // bus is gone
+    }
+
+    @Test fun busEffectsStartFullyWetAndAreEditable() {
+        var (d, _, b) = base()
+        val (d1, rid) = EditOps.addEffect(d, -(b + 1), "reverb"); d = d1
+        assertEquals(1f, d.bus(b)!!.effects[0].params["wet"]!!, 0f); assertEquals(0f, d.bus(b)!!.effects[0].params["dry"]!!, 0f)
+        d = EditOps.setEffectParam(d, rid, "roomsize", 0.9f)
+        assertEquals(0.9f, d.bus(b)!!.effects[0].params["roomsize"]!!, 0f)
+        d = EditOps.setEffectBypass(d, rid, true)
+        assertTrue(d.bus(b)!!.effects[0].bypass)
+        val (d2, gid) = EditOps.addEffect(d, -(b + 1), "gain")
+        assertTrue(d2.bus(b)!!.effects[1].params.isEmpty())
+        d = EditOps.removeEffect(d2, rid)
+        assertEquals(listOf(gid), d.bus(b)!!.effects.map { it.id })
+        assertEquals(-1, EditOps.addEffect(d, -4, "gain").second)          // bus 3 not present
+    }
+
+    @Test fun codecRoundTripsBusesAndIgnoresBadEntries() {
+        var (d, t, b) = base()
+        d = EditOps.setTrackSend(d, t, b, 0.25f); d = EditOps.setBusLevel(d, b, 1.5f)
+        assertEquals(d, ProjectCodec.decode(ProjectCodec.encode(d)))
+        val bad = ProjectCodec.decode("""{"buses":[{"index":9,"name":"x"},{"index":1,"name":"ok"},{"index":1,"name":"dup"}],
+            "tracks":[{"id":1,"name":"T","sends":{"0":0.5,"7":1,"x":1,"1":-3}}]}""")
+        assertEquals(listOf(1), bad.buses.map { it.index })
+        assertEquals(mapOf(0 to 0.5f), bad.tracks[0].sends)
+    }
+
+    @Test fun syncSendsOnlyWhatChangedAndCleansUpRemovedBuses() {
+        val e = FakeEngine(); val s = EngineSync(e) { it }
+        var (d, t, b) = base()
+        s.sync(d); e.calls.clear()
+        d = EditOps.setTrackSend(d, t, b, 0.5f); s.sync(d)
+        assertEquals(listOf("send $t $b 0.5"), e.calls); e.calls.clear()
+        d = EditOps.setBusLevel(d, b, 0.8f); s.sync(d)
+        assertEquals(listOf("busLevel $b 0.8"), e.calls); e.calls.clear()
+        d = EditOps.addEffect(d, -(b + 1), "reverb").first; s.sync(d)
+        assertTrue(e.calls.first().startsWith("addFx t${-(b + 1)} reverb"))
+        e.calls.clear()
+        d = EditOps.removeBus(d, b); s.sync(d)
+        assertTrue(e.calls.any { it.startsWith("rmFx") }); assertTrue("busLevel $b 1.0" in e.calls); assertTrue("send $t $b 0.0" in e.calls)
+        // a full rebuild of an existing project sends the saved sends and levels
+        d = EditOps.setTrackSend(EditOps.addBus(d).first, t, 0, 0.3f)
+        e.calls.clear(); s.sync(d, forceRebuild = true)
+        assertTrue("send $t 0 0.3" in e.calls)
     }
 }

@@ -34,7 +34,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wavestudio.app.engine.MasterMeters
+import com.wavestudio.app.project.BusDoc
 import com.wavestudio.app.project.TrackDoc
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Slider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.wavestudio.app.ui.common.Knob
 import com.wavestudio.app.ui.common.VuMeter
 import kotlin.math.abs
@@ -65,8 +73,32 @@ fun MixerPanel(
     onMasterVolume: (Float) -> Unit,
     onEffects: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    horizontal: Boolean = false
+    horizontal: Boolean = false,
+    buses: List<BusDoc> = emptyList(),
+    onSend: (trackId: Int, bus: Int, level: Float) -> Unit = { _, _, _ -> },
+    onBusLevel: (Int, Float) -> Unit = { _, _ -> },
+    onAddBus: () -> Unit = {},
+    onRemoveBus: (Int) -> Unit = {}
 ) {
+    var sendsFor by remember { mutableStateOf<Int?>(null) }
+    val sendTrack = tracks.firstOrNull { it.id == sendsFor }
+    if (sendTrack != null) {
+        AlertDialog(
+            onDismissRequest = { sendsFor = null },
+            title = { Text("Sends — ${sendTrack.name}") },
+            text = {
+                Column {
+                    if (buses.isEmpty()) Text("No aux bus yet. Add one with the + AUX strip at the end of the mixer, put effects such as reverb on it, then send tracks to it here.", fontSize = 13.sp)
+                    buses.forEach { b ->
+                        val lv = sendTrack.sends[b.index] ?: 0f
+                        Text("${b.name}: " + (if (lv <= 0f) "off" else "${gainLabel(lv)} dB") + "  (post-fader)", fontSize = 12.sp)
+                        Slider(value = lv, onValueChange = { onSend(sendTrack.id, b.index, if (it < 0.02f) 0f else it) }, valueRange = 0f..2f)
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { sendsFor = null }) { Text("Done") } }
+        )
+    }
     LazyRow(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
         verticalAlignment = if (horizontal) Alignment.Bottom else Alignment.CenterVertically,
@@ -78,8 +110,17 @@ fun MixerPanel(
             ChannelStrip(
                 track = t, peak = if (m == null) 0f else maxOf(m.first, m.second),
                 onVolume = { onVolume(t.id, it) }, onPan = { onPan(t.id, it) },
-                onMute = { onMute(t.id) }, onSolo = { onSolo(t.id) }, onEffects = { onEffects(t.id) }
+                onMute = { onMute(t.id) }, onSolo = { onSolo(t.id) }, onEffects = { onEffects(t.id) },
+                sendCount = t.sends.size, onSends = { sendsFor = t.id }
             )
+        }
+        items(buses, key = { "bus${it.index}" }) { b ->
+            BusStrip(b, onLevel = { onBusLevel(b.index, it) }, onEffects = { onEffects(-(b.index + 1)) }, onRemove = { onRemoveBus(b.index) })
+        }
+        if (buses.size < com.wavestudio.app.project.MAX_BUSES) item {
+            Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.small, modifier = Modifier.width(64.dp).fillMaxHeight()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { TextButton(onClick = onAddBus) { Text("+ AUX", fontSize = 11.sp) } }
+            }
         }
         item { MasterStrip(master, masterVolume, onMasterVolume, onEffects = { onEffects(0) }) }
     }
@@ -87,7 +128,8 @@ fun MixerPanel(
 
 @Composable
 fun ChannelStrip(track: TrackDoc, peak: Float, onVolume: (Float) -> Unit, onPan: (Float) -> Unit,
-                 onMute: () -> Unit, onSolo: () -> Unit, onEffects: () -> Unit) {
+                 onMute: () -> Unit, onSolo: () -> Unit, onEffects: () -> Unit,
+                 sendCount: Int = 0, onSends: () -> Unit = {}) {
     val color = Color(track.color)
     Surface(tonalElevation = 3.dp, shape = MaterialTheme.shapes.small, modifier = Modifier.width(84.dp).fillMaxHeight()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
@@ -101,6 +143,9 @@ fun ChannelStrip(track: TrackDoc, peak: Float, onVolume: (Float) -> Unit, onPan:
             TextButton(onClick = onEffects, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Text(if (track.effects.isEmpty()) "FX" else "FX (${track.effects.size})", fontSize = 10.sp)
             }
+            TextButton(onClick = onSends, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
+                Text(if (sendCount == 0) "SEND" else "SEND ($sendCount)", fontSize = 10.sp)
+            }
             Knob(value = track.pan, range = -1f..1f, label = "PAN", size = 36.dp, onValueChange = onPan,
                 formatter = { if (abs(it) < 0.05f) "C" else if (it < 0) "L${(-it * 100).toInt()}" else "R${(it * 100).toInt()}" })
             Spacer(Modifier.height(4.dp))
@@ -109,6 +154,27 @@ fun ChannelStrip(track: TrackDoc, peak: Float, onVolume: (Float) -> Unit, onPan:
                 VerticalFader(track.volume, onVolume, Modifier.fillMaxHeight().width(30.dp))
             }
             Text("${gainLabel(track.volume)} dB", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Aux bus return: the summed (post-fader) sends go through the bus effect chain and come back at this level. */
+@Composable
+fun BusStrip(bus: BusDoc, onLevel: (Float) -> Unit, onEffects: () -> Unit, onRemove: () -> Unit) {
+    Surface(tonalElevation = 4.dp, color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small,
+        modifier = Modifier.width(84.dp).fillMaxHeight()) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(4.dp)) {
+            Text(bus.name, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text("AUX ${bus.index + 1}", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onEffects, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
+                Text(if (bus.effects.isEmpty()) "FX" else "FX (${bus.effects.size})", fontSize = 10.sp)
+            }
+            Knob(value = bus.level, range = 0f..2f, label = "RETURN", size = 36.dp, onValueChange = onLevel,
+                formatter = { gainLabel(it) + " dB" })
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onRemove, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
+                Text("Remove", fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }

@@ -61,6 +61,7 @@ public:
     static constexpr int kMaxTracks = 64;
     static constexpr int kMaxChunk = 512;
     static constexpr int kMaxEffectsPerChain = 16;
+    static constexpr int kMaxBuses = 4;       // aux send buses; bus b is addressed as effect-chain id -(b+1)
 
     EngineCore(std::shared_ptr<MediaLibrary> media, float engine_rate, float timeline_rate = 48000.f);
     ~EngineCore();
@@ -92,6 +93,10 @@ public:
     void set_track_pan(int id, float p);      // -1..1
     void set_track_mute(int id, bool m);
     void set_track_solo(int id, bool s);
+    // Aux sends: post-fader/post-pan feed of a track into bus `bus` (0..kMaxBuses-1). Level is linear 0..2.
+    // Each bus has its own effect chain (add_effect with track_id = -(bus+1)) and a return level (0..2).
+    void set_track_send(int id, int bus, float level);
+    void set_bus_level(int bus, float level);
 
     // Returns MediaError (0 ok / 4 truncated-but-usable; others = clip not added).
     int set_clip(const ClipParams& c);
@@ -103,7 +108,7 @@ public:
     bool get_peaks(const std::string& path, double t0_sec, double t1_sec, int bins, float* out);
     std::shared_ptr<MediaLibrary> media() const { return media_; }
 
-    // Effects. track_id 0 = master. Returns the new effect id or a negative error.
+    // Effects. track_id 0 = master, -1..-kMaxBuses = aux bus chains. Returns the new effect id or a negative error.
     int add_effect(int track_id, const std::string& type, int forced_id = 0, int index = -1);
     bool remove_effect(int effect_id);
     bool move_effect(int effect_id, int new_index);
@@ -163,6 +168,7 @@ private:
     struct Snapshot {
         std::vector<STrack> tracks;
         std::vector<SSlot> master;
+        std::array<std::vector<SSlot>, kMaxBuses> bus;
         bool loop = false;
         int64_t loop_s = 0, loop_e = 0;
         bool punch = false;
@@ -182,6 +188,7 @@ private:
         int id = 0; int slot = 0;
         std::vector<MEffect> fx;
         float vol = 1.f, pan = 0.f; bool mute = false, solo = false;
+        std::array<float, kMaxBuses> send{};
     };
     struct MClip { ClipParams p; std::shared_ptr<AudioBuffer> buf; int64_t len_tl_clamped = 0; };
 
@@ -189,6 +196,7 @@ private:
         std::atomic<float> vol{1.f}, pan{0.f};
         std::atomic<bool> mute{false}, solo{false};
         std::atomic<float> peak_l{0.f}, peak_r{0.f};
+        std::atomic<float> send[kMaxBuses] = {};
         std::atomic<bool> fresh{true};     // first render after creation: jump to target gain, no ramp
     };
 
@@ -198,7 +206,8 @@ private:
     void pump_analysis_locked();
     MTrack* find_track(int id);
     const MTrack* find_track(int id) const;
-    MEffect* find_effect(int id, MTrack** owner, int* chain_index);
+    // Locates an effect in the master chain, a bus chain or a track chain. `chain` and `owner_id` (0 master, <0 bus, >0 track) are optional outputs.
+    MEffect* find_effect(int id, MTrack** owner, int* chain_index, std::vector<MEffect>** chain = nullptr, int* owner_id = nullptr);
     std::vector<MEffect>& chain_of(int track_id, bool* ok);
     int64_t tl_to_engine(int64_t tl) const;
     int64_t engine_to_tl(int64_t e) const;
@@ -219,6 +228,7 @@ private:
     // control model
     std::vector<MTrack> tracks_;
     std::vector<MEffect> master_fx_;
+    std::array<std::vector<MEffect>, kMaxBuses> bus_fx_;
     std::vector<MClip> clips_;
     std::array<bool, kMaxTracks> slot_used_{};
     int next_effect_id_ = 1;
@@ -276,6 +286,12 @@ private:
     std::array<float, kMaxChunk> bufL_{}, bufR_{}, trkL_{}, trkR_{}, inL_{}, inR_{};
     std::array<float, kMaxChunk * 2> recbuf_{};
     std::array<float, kMaxTracks> gain_l_{}, gain_r_{};
+    std::array<std::array<float, kMaxChunk>, kMaxBuses> busL_{}, busR_{};
+    std::array<float, kMaxChunk> pfL_{}, pfR_{};
+    std::array<std::array<float, kMaxBuses>, kMaxTracks> send_cur_{};
+    std::array<float, kMaxBuses> bus_gain_cur_{};
+    std::array<int64_t, kMaxBuses> bus_idle_{};
+    std::array<std::atomic<float>, kMaxBuses> bus_level_{};
     float master_gain_cur_ = 1.f;
     Recorder recorder_;
 };

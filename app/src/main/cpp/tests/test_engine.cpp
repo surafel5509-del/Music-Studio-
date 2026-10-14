@@ -410,6 +410,72 @@ static void test_missing_and_bad_media() {
     CHECK(peak(o) == 0.f);
 }
 
+// ---- aux send buses ----
+static float rms_range(const std::vector<float>& v, int from, int to) {
+    double a = 0; for (int i = from; i < to; ++i) a += (double)v[i * 2] * v[i * 2];
+    return (float)std::sqrt(a / std::max(1, to - from));
+}
+static void test_aux_buses() {
+    auto src = sine(48000, 2, 48000, 440, 0.2);
+    std::string p = wav("bus", src, 2, 48000);
+    auto setup = [&](EngineCore& e) { e.add_track(1); e.set_clip(clip(1, 1, p, 0, 48000)); e.play(); };
+    // reference: no sends
+    EngineCore ref(lib(), 48000); setup(ref);
+    auto base = render_all(ref, 24000, 480);
+    const float base_rms = rms_range(base, 4800, 24000);
+    CHECK(base_rms > 0.1f);
+
+    // send 0.5 into an empty bus chain: acts as a parallel dry path -> 1.5x
+    EngineCore a(lib(), 48000); setup(a); a.set_track_send(1, 0, 0.5f);
+    auto oa = render_all(a, 24000, 480);
+    CHECK_NEAR(rms_range(oa, 4800, 24000) / base_rms, 1.5, 0.02);
+
+    // a +6 dB gain effect on the bus, return level 0.5: 1 + 0.5 * 2 * 0.5 = 1.5
+    EngineCore b(lib(), 48000); setup(b); b.set_track_send(1, 1, 0.5f);
+    int g = b.add_effect(-2, "gain"); CHECK(g > 0);
+    b.set_effect_param(g, 0, 6.0206f); b.set_bus_level(1, 0.5f);
+    auto ob = render_all(b, 24000, 480);
+    CHECK_NEAR(rms_range(ob, 8000, 24000) / base_rms, 1.5, 0.03);
+    EffectInfo info; CHECK(b.get_effect_info(g, info) && info.track_id == -2);
+    CHECK(b.list_effects(-2).size() == 1 && b.list_effects(-1).empty() && b.list_effects(-9).empty());
+
+    // send 0 or muted track: bus is silent
+    EngineCore c(lib(), 48000); setup(c); c.set_track_send(1, 0, 0.8f); c.set_track_send(1, 0, 0.f);
+    auto oc = render_all(c, 24000, 480);
+    CHECK_NEAR(rms_range(oc, 4800, 24000) / base_rms, 1.0, 0.005);
+    EngineCore d(lib(), 48000); setup(d); d.set_track_send(1, 0, 1.f); d.set_track_mute(1, true);
+    auto od = render_all(d, 24000, 480);
+    CHECK(rms_range(od, 4800, 24000) < 1e-4f);
+
+    // out-of-range buses are ignored, bad bus chain id is rejected
+    a.set_track_send(1, 7, 1.f); a.set_track_send(1, -1, 1.f); a.set_bus_level(9, 1.f);
+    CHECK(a.add_effect(-5, "gain") < 0);
+
+    // reverb on a bus keeps ringing after the clip has ended (the dry track is silent by then)
+    EngineCore r(lib(), 48000); setup(r); r.set_track_send(1, 0, 1.f);
+    int rv = r.add_effect(-1, "reverb"); CHECK(rv > 0);
+    r.set_effect_param(rv, 2, 1.f); r.set_effect_param(rv, 3, 0.f);                     // wet only
+    auto orv = render_all(r, 48000 + 48000, 480);                                          // 1 s clip + 1 s after
+    CHECK(rms_range(orv, 48000 + 2400, 48000 + 24000) > 0.005f);
+    EngineCore nr(lib(), 48000); setup(nr);
+    auto onr = render_all(nr, 96000, 480);
+    CHECK(rms_range(onr, 48000 + 2400, 96000) < 1e-5f);
+
+    // offline clone keeps sends, bus effects and levels: same signal as the live engine would produce
+    EngineCore live(lib(), 48000); live.add_track(1); live.set_clip(clip(1, 1, p, 0, 48000));
+    live.set_track_send(1, 2, 0.7f); live.set_bus_level(2, 0.6f);
+    int lg = live.add_effect(-3, "gain"); live.set_effect_param(lg, 0, -3.f);
+    auto cl = live.clone(48000.f); cl->prepare_offline();
+    std::vector<float> off(48000 * 2), lv(48000 * 2);
+    CHECK(cl->render_offline(0, 48000, off.data()));
+    live.prepare_offline(); CHECK(live.render_offline(0, 48000, lv.data()));
+    double diff = 0; for (size_t i = 0; i < off.size(); ++i) diff = std::max(diff, (double)std::fabs(off[i] - lv[i]));
+    CHECK_MSG(diff < 1e-5, "clone differs by %g", diff);
+    EngineCore plain(lib(), 48000); setup(plain);
+    auto op = render_all(plain, 48000, 480);
+    CHECK(rms_range(off, 4800, 40000) > rms_range(op, 4800, 40000) * 1.25f);         // expected ~1.30x: the send (0.7 * 0.6 * -3 dB) is audible in the clone
+}
+
 int main() {
     RUN(test_silence_and_idle);
     RUN(test_clip_exact_playback_stereo_and_mono);
@@ -427,6 +493,7 @@ int main() {
     RUN(test_offline_matches_live);
     RUN(test_loudness_via_engine);
     RUN(test_missing_and_bad_media);
+    RUN(test_aux_buses);
     RUN(test_no_allocation_in_render);
     TEST_MAIN_END();
 }

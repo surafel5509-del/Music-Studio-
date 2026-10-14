@@ -41,7 +41,7 @@ int main() {
     int next_clip = 1;
     const int iterations = getenv("ITER") ? atoi(getenv("ITER")) : 4000;
     for (int it = 0; it < iterations; ++it) {
-        int op = rng() % 22;
+        int op = rng() % 24;
         int track = 1 + rng() % 6;
         if (getenv("VERBOSE2")) std::printf("op %d track %d\n", op, track);
         switch (op) {
@@ -54,7 +54,7 @@ int main() {
                 core.set_clip(c);
                 break; }
             case 4: core.remove_clip(1 + rng() % 40); break;
-            case 5: { int id = core.add_effect(rng() % 3 == 0 ? 0 : track, types[rng() % types.size()]); if (id > 0) fx_ids.push_back(id); break; }
+            case 5: { int where = rng() % 3 == 0 ? 0 : (rng() % 4 == 0 ? -(int)(1 + rng() % 4) : track); int id = core.add_effect(where, types[rng() % types.size()]); if (id > 0) fx_ids.push_back(id); break; }
             case 6: if (!fx_ids.empty()) { size_t k = rng() % fx_ids.size(); core.remove_effect(fx_ids[k]); fx_ids.erase(fx_ids.begin() + k); } break;
             case 7: case 8: case 9: case 10: if (!fx_ids.empty()) {
                 int id = fx_ids[rng() % fx_ids.size()]; EffectInfo inf;
@@ -75,6 +75,8 @@ int main() {
             case 20: {
                 if (core.is_recording()) core.stop_recording(); else core.start_recording("/tmp/ws_stress_rec.wav", 1 + rng() % 2, 24);
                 break; }
+            case 22: core.set_track_send(track, rng() % 4, (rng() % 150) / 100.f); break;
+            case 23: core.set_bus_level(rng() % 4, (rng() % 200) / 100.f); break;
             case 21: core.master_meters(); core.lufs_integrated(); { float b[64]; core.get_spectrum(b, 64); } float l, r; core.track_meters(track, &l, &r); break;
         }
         if (it % 200 == 0) { std::this_thread::yield(); if (getenv("VERBOSE")) std::printf("it %d blocks %ld\n", it, blocks.load()); }

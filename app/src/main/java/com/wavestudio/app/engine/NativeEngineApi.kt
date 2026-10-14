@@ -25,5 +25,7 @@ class NativeEngineApi(private val n: NativeAudioEngine) : EngineApi {
     override fun setLoop(start: Long, end: Long, enabled: Boolean) = n.nativeSetLoop(start, end, enabled)
     override fun setMetronome(on: Boolean, bpm: Float, beats: Int) = n.nativeSetMetronome(on, bpm, beats)
     override fun setCountIn(bars: Int) = n.nativeSetCountIn(bars)
+    override fun setTrackSend(id: Int, bus: Int, level: Float) = n.nativeSetTrackSend(id, bus, level)
+    override fun setBusLevel(bus: Int, level: Float) = n.nativeSetBusLevel(bus, level)
     override fun setPunch(enabled: Boolean, inFrame: Long, outFrame: Long) = n.nativeSetPunch(enabled, inFrame, outFrame)
 }

@@ -321,7 +321,9 @@ fun EditorScreen(
                     MixerPanel(
                         tracks = doc.tracks, trackMeters = trackMeters, master = meters, masterVolume = doc.masterVolume,
                         onVolume = vm::setTrackVolume, onPan = vm::setTrackPan, onMute = vm::toggleMute, onSolo = vm::toggleSolo,
-                        onMasterVolume = vm::setMasterVolume, onEffects = onOpenEffects, horizontal = true
+                        onMasterVolume = vm::setMasterVolume, onEffects = onOpenEffects, horizontal = true,
+                        buses = doc.buses, onSend = vm::setTrackSend, onBusLevel = vm::setBusLevel,
+                        onAddBus = vm::addBus, onRemoveBus = vm::removeBus
                     )
                 }
             }
