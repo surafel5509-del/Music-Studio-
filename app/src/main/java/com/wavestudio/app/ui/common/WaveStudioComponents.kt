@@ -113,9 +113,10 @@ fun Knob(
     var startY by remember { mutableFloatStateOf(0f) }
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
+        val knobSize = size
         Box(
             modifier = Modifier
-                .size(size)
+                .size(knobSize)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape)
@@ -123,7 +124,7 @@ fun Knob(
                     detectVerticalDragGestures(
                         onDragStart = { startNormalized = normalized; startY = it.y },
                         onVerticalDrag = { _, drag ->
-                            val delta = -drag / size.height.toPx()
+                            val delta = -drag / knobSize.toPx()
                             val n = (startNormalized + delta).coerceIn(0f, 1f)
                             onValueChange(range.start + n * (range.endInclusive - range.start))
                         }
@@ -134,7 +135,7 @@ fun Knob(
                 val angle = (-135f + normalized * 270f) * kotlin.math.PI.toFloat() / 180f
                 val cx = size.width / 2
                 val cy = size.height / 2
-                val r = size.minDimension / 2 - 4.dp.toPx()
+                val r = kotlin.math.min(size.width, size.height) / 2 - 4.dp.toPx()
                 drawCircle(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), radius = r*0.75f)
                 drawLine(
                     MaterialTheme.colorScheme.primary,
