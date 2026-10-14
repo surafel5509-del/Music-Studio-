@@ -176,7 +176,6 @@ dependencies {
 
     // File / Storage
     implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("androidx.window:window-core:1.2.0")
 
     // Accompanist
     implementation("com.google.accompanist:accompanist-permissions:0.34.0")

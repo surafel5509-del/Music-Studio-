@@ -204,11 +204,11 @@ fun EffectBrowserDialog(onDismiss: () -> Unit, onAdd: (EffectType) -> Unit) {
 fun iconFor(t: EffectType): ImageVector = when (t) {
     EffectType.EQ -> Icons.Default.Equalizer
     EffectType.COMPRESSOR -> Icons.Default.Compress
-    EffectType.LIMITER -> Icons.Default.HorizontalRule
+    EffectType.LIMITER -> Icons.Default.Remove
     EffectType.REVERB -> Icons.Default.GraphicEq
     EffectType.DELAY -> Icons.Default.Schedule
     EffectType.CHORUS -> Icons.Default.People
-    EffectType.FLANGER -> Icons.Default.Water
+    EffectType.FLANGER -> Icons.Default.BlurOn
     EffectType.PHASER -> Icons.Default.FilterList
     EffectType.DISTORTION -> Icons.Default.FlashOn
     EffectType.BITCRUSHER -> Icons.Default.Memory
