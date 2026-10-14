@@ -105,8 +105,16 @@ jobs:
       - name: Emit errors inline
         if: failure()
         run: |
-          echo "=== Kotlin/C++ errors in log ==="
-          grep -E "(e: |error:|FAILED|exception:)" build.log | head -120 || true
+          echo "### Build errors" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -nE "(^e:| error:| FAILED|Caused by:|exception:|^FAILURE:|^> Task|BUILD FAILED)" build.log | tail -200 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=== Emitting errors as annotations ==="
+          while IFS= read -r line; do
+            echo "::error::$line"
+          done < <(grep -nE "(^e: | error: | FAILED$|Caused by:|BUILD FAILED)" build.log | head -80)
+          echo "=== Tail 400 of build.log ==="
+          tail -400 build.log
 
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
