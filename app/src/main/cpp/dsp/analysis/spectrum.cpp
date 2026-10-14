@@ -1,5 +1,6 @@
 #include "spectrum.h"
 #include <cmath>
+#include <cstring>
 #include <mutex>
 #include <algorithm>
 

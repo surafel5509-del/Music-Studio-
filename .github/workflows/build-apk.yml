@@ -124,33 +124,43 @@ jobs:
 
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
-        run: ./gradlew assembleRelease --stacktrace 2>&1 | tail -300
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee build.log | tail -300
         env:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
 
       - name: Prepare APK artifact
+        id: apk
         run: |
           set -e
+          if [ "${{ github.event.inputs.buildType }}" = "release" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VARIANT=release
+          else
+            VARIANT=debug
+          fi
           mkdir -p apk-out
           echo "=== Searching for APKs ==="
           find app/build -name "*.apk" -type f || true
-          APK=$(find app/build -name "*.apk" -type f | head -1)
+          APK=$(find app/build/outputs/apk/$VARIANT -name "*.apk" -type f | head -1)
           if [ -z "$APK" ]; then
             echo "::error::No APK produced - listing outputs:"
             find app/build/outputs -type f 2>&1 | head -100 || true
             find app/build -maxdepth 6 -type d 2>&1 | head -100 || true
             exit 1
           fi
-          cp -v "$APK" apk-out/WaveStudio-debug.apk
+          OUT="apk-out/WaveStudio-$VARIANT.apk"
+          cp -v "$APK" "$OUT"
           ls -la apk-out/
-          echo "APK_SIZE=$(stat -c%s apk-out/WaveStudio-debug.apk)"
+          echo "APK_SIZE=$(stat -c%s "$OUT")"
+          echo "path=$OUT" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: wavestudio-apk
-          path: apk-out/WaveStudio-debug.apk
+          path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
 
       - name: Create GitHub Release (on tags)

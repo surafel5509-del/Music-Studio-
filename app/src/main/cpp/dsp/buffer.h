@@ -7,6 +7,8 @@
 #include <mutex>
 #include <cstring>
 #include <cassert>
+#include <cmath>
+#include "util/db_utils.h"
 
 namespace wavestudio {
 
@@ -119,9 +121,5 @@ private:
     std::vector<std::vector<float>> mipmap_mins_;
     std::vector<std::vector<float>> mipmap_maxs_;
 };
-
-// Small helper: convert between dB and linear
-inline float db_to_linear(float db) { return powf(10.f, db / 20.f); }
-inline float linear_to_db(float lin) { return 20.f * log10f(fmaxf(lin, 1e-10f)); }
 
 } // namespace wavestudio

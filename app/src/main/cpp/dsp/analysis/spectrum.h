@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <complex>
 #include <atomic>
+#include <mutex>
 
 namespace wavestudio {
 

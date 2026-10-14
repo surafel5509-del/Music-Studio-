@@ -1,5 +1,6 @@
 #pragma once
 #include <vector>
+#include <cstdint>
 
 namespace wavestudio {
 
@@ -11,9 +12,11 @@ public:
     float integrated() const { return integrated_; }
     float momentary() const { return momentary_; }
     void reset();
+
+    struct Biquad { float b0=1,b1=0,b2=0,a1=0,a2=0; float x1=0,x2=0,y1=0,y2=0; float tick(float in); };
+
 private:
     float sample_rate_ = 48000.f;
-    struct Biquad { float b0=1,b1=0,b2=0,a1=0,a2=0; float x1=0,x2=0,y1=0,y2=0; float tick(float in); };
     Biquad hp1_, hp2_; // K-weighting
     struct Channel {
         Biquad hp; Biquad hs;
