@@ -38,6 +38,16 @@ WS_STORE_PASS=your-store-password
 WS_KEY_PASS=your-key-password
 ```
 
+## GitHub Actions CI
+Every push to `main` or any `arena/**` branch triggers `.github/workflows/build-apk.yml`,
+which provisions a JDK 17 + Android SDK (API 34, Build-Tools 34.0.0, NDK 25.2.9519653,
+CMake 3.22.1) environment, runs `./gradlew assembleDebug`, and uploads the signed debug
+APK as a workflow artifact named `wavestudio-apk`. Pushing a tag (`v*`) triggers a release
+build and attaches the signed APK to a GitHub Release.
+
+The latest successful debug APK can be downloaded from the **Actions** tab on GitHub
+(select the latest green run → scroll to **Artifacts** → `wavestudio-apk`).
+
 ## SDK/NDK Requirements
 - `compileSdk = 34`
 - `minSdk = 26` (Android 8.0)
