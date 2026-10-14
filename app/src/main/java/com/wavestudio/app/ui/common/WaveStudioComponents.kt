@@ -131,19 +131,21 @@ fun Knob(
                     )
                 }
         ) {
+            val primary = MaterialTheme.colorScheme.primary
+            val onSurface = MaterialTheme.colorScheme.onSurface
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val angle = (-135f + normalized * 270f) * kotlin.math.PI.toFloat() / 180f
                 val cx = size.width / 2
                 val cy = size.height / 2
                 val r = kotlin.math.min(size.width, size.height) / 2 - 4.dp.toPx()
-                drawCircle(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), radius = r*0.75f)
+                drawCircle(primary.copy(alpha = 0.2f), radius = r*0.75f)
                 drawLine(
-                    MaterialTheme.colorScheme.primary,
+                    primary,
                     Offset(cx, cy),
                     Offset(cx + kotlin.math.cos(angle)*r*0.8f, cy + kotlin.math.sin(angle)*r*0.8f),
                     strokeWidth = 3.dp.toPx()
                 )
-                drawCircle(MaterialTheme.colorScheme.onSurface, radius = 3.dp.toPx())
+                drawCircle(onSurface, radius = 3.dp.toPx())
             }
         }
         label?.let {
