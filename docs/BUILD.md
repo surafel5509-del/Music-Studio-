@@ -58,7 +58,9 @@ After a successful online build, you can use Gradle's `--offline` flag:
 
 ## Running Tests
 ```bash
-./gradlew testDebugUnitTest          # Unit tests (JVM)
-./gradlew connectedDebugAndroidTest  # Instrumented tests (device)
+scripts/run_native_tests.sh              # native engine, host g++ with ASan/UBSan/TSan (FAST=1 skips the slow TSan stress)
+./gradlew testDebugUnitTest              # JVM unit tests (project format, edit ops, history, engine sync)
+./gradlew connectedDebugAndroidTest      # instrumented tests (needs a device; not run in CI)
 ```
-// noop trigger Wed Oct 14 04:48:26 UTC 2026
+CI (`.github/workflows/build-apk.yml`) runs the native tests, builds the debug APK, runs the JVM unit tests and uploads
+`wavestudio-apk`. Pass `buildType=release` through *Run workflow* for a release build.
