@@ -1,136 +1,83 @@
 package com.wavestudio.app.ui.settings
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import com.wavestudio.app.engine.AudioEngineController
 import com.wavestudio.app.ui.common.SectionCard
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 
+@HiltViewModel
+class SettingsViewModel @Inject constructor(val engine: AudioEngineController) : ViewModel()
+
+/**
+ * Only shows things that are real: the live state of the audio device as reported by the engine, and where data lives.
+ * (Earlier versions had switches here that were not connected to anything; they were removed.)
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
-    var themeDark by remember { mutableStateOf(true) }
-    var sampleRate by remember { mutableStateOf(48000) }
-    var bufferSize by remember { mutableStateOf(256) }
-    var bitDepth by remember { mutableStateOf(24) }
-    var lowLatency by remember { mutableStateOf(true) }
-    var autoSave by remember { mutableStateOf(true) }
-    var snapToGrid by remember { mutableStateOf(true) }
-    var autoBackup by remember { mutableStateOf(true) }
-    var metronomeDefaultOn by remember { mutableStateOf(false) }
-    var defaultBpm by remember { mutableStateOf(120) }
-
+fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+    val d by vm.engine.device.collectAsState()
+    val ctx = LocalContext.current
     Scaffold(topBar = {
-        TopAppBar(title = { Text("Settings") }, navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+        TopAppBar(title = { Text("Audio & storage") }, navigationIcon = {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
         })
     }) { pad ->
         Column(
-            modifier = Modifier
-                .padding(pad)
-                .padding(16.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.padding(pad).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            SectionCard("Appearance") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Dark theme", modifier = Modifier.weight(1f))
-                    Switch(checked = themeDark, onCheckedChange = { themeDark = it })
+            SectionCard("Audio device (live)") {
+                if (!d.outputRunning) Text("Output is not running", color = MaterialTheme.colorScheme.error)
+                else {
+                    Text("Sample rate: ${d.sampleRate} Hz")
+                    Text("Burst: ${d.framesPerBurst} frames · buffer: ${d.bufferFrames} frames")
+                    Text("Estimated output latency: %.1f ms".format(d.estOutputLatencyMs))
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Accent color", modifier = Modifier.weight(1f))
-                    // Accent swatches would go here; using default blue for simplicity
-                    Text("Blue", color = MaterialTheme.colorScheme.primary)
-                }
+                Text(if (d.inputRunning) "Input: ${d.inputChannels} channel(s), est. latency %.1f ms".format(d.estInputLatencyMs)
+                     else "Input: closed (microphone permission missing or no input device)")
+                Text("Latency values are estimates from buffer sizes. They differ between devices, routes (speaker, wired, Bluetooth) and Android versions.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
-            SectionCard("Audio") {
-                Text("Sample rate", style = MaterialTheme.typography.labelMedium)
-                Row {
-                    listOf(44100, 48000, 88200, 96000, 192000).forEach { sr ->
-                        FilterChip(
-                            selected = sampleRate == sr, onClick = { sampleRate = sr },
-                            label = { Text("${sr/1000}k") },
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Bit depth", style = MaterialTheme.typography.labelMedium)
-                Row {
-                    listOf(16, 24, 32).forEach { b ->
-                        FilterChip(
-                            selected = bitDepth == b, onClick = { bitDepth = b },
-                            label = { Text("${b}bit") },
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Buffer size", style = MaterialTheme.typography.labelMedium)
-                Slider(value = bufferSize.toFloat(), onValueChange = { bufferSize = it.toInt() },
-                    valueRange = 32f..2048f, steps = 7)
-                Text("${bufferSize} frames", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Low-latency mode", modifier = Modifier.weight(1f))
-                    Switch(checked = lowLatency, onCheckedChange = { lowLatency = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Bluetooth microphone support", modifier = Modifier.weight(1f))
-                    Switch(checked = true, onCheckedChange = {})
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("USB audio interface", modifier = Modifier.weight(1f))
-                    Switch(checked = true, onCheckedChange = {})
-                }
+            SectionCard("Health") {
+                Text("Output underruns (xruns): ${d.xruns}")
+                Text("Input overruns: ${d.inputUnderruns}")
+                Text("Late render blocks: ${d.underrunBlocks}")
+                Text("Peak render load: ${(d.maxRenderLoad * 100).toInt()}% of buffer time")
+                Text("Stream restarts (route changes / errors): ${d.restarts}")
+                if (d.lastError != 0) Text("Last stream error code: ${d.lastError}", color = MaterialTheme.colorScheme.error)
             }
-
-            SectionCard("Project Defaults") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Snap to grid", modifier = Modifier.weight(1f))
-                    Switch(checked = snapToGrid, onCheckedChange = { snapToGrid = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Auto-save", modifier = Modifier.weight(1f))
-                    Switch(checked = autoSave, onCheckedChange = { autoSave = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Incremental backup", modifier = Modifier.weight(1f))
-                    Switch(checked = autoBackup, onCheckedChange = { autoBackup = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Metronome on by default", modifier = Modifier.weight(1f))
-                    Switch(checked = metronomeDefaultOn, onCheckedChange = { metronomeDefaultOn = it })
-                }
-                Text("Default BPM", style = MaterialTheme.typography.labelMedium)
-                Slider(value = defaultBpm.toFloat(), onValueChange = { defaultBpm = it.toInt() }, valueRange = 40f..240f)
-                Text("$defaultBpm BPM", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-
             SectionCard("Storage") {
-                Text("Project folder", style = MaterialTheme.typography.bodyMedium)
-                Text("/Android/media/com.wavestudio.app/projects",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(onClick = {}) { Text("Clear cache") }
+                Text("Projects are stored privately on this device:")
+                Text(ctx.filesDir.absolutePath + "/projects/<id>/", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Each project folder holds project.json (+ project.json.bak), media/ (imports) and recordings/ (takes). " +
+                    "Changes are saved automatically a moment after every edit.", style = MaterialTheme.typography.bodySmall)
             }
-
             SectionCard("About") {
-                Text("WaveStudio v1.0.0", style = MaterialTheme.typography.titleMedium)
-                Text("A fully offline, professional-grade music editor for Android.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(4.dp))
-                Text("No internet connection required. All processing happens locally on your device.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = {}) { Text("View licenses") }
-                TextButton(onClick = {}) { Text("Offline help & tutorials") }
+                Text("WaveStudio works completely offline: the app does not request the internet permission.")
+                Text("Exports are WAV (16/24-bit PCM or 32-bit float) only.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

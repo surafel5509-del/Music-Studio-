@@ -1,41 +1,38 @@
 package com.wavestudio.app.ui
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
 import com.wavestudio.app.engine.AudioEngineController
-import com.wavestudio.app.service.AudioEngineService
+import com.wavestudio.app.engine.TransportState
+import com.wavestudio.app.session.ProjectSession
 import com.wavestudio.app.ui.navigation.WaveStudioNavGraph
 import com.wavestudio.app.ui.theme.WaveStudioTheme
 import dagger.hilt.android.AndroidEntryPoint
-import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var engine: AudioEngineController
+    @Inject lateinit var session: ProjectSession
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { perms ->
-        // start engine regardless; recording features will remain disabled if perms denied
-        startEngineAndService()
+    ) { _ ->
+        // The engine always starts; the microphone stream is only opened when RECORD_AUDIO was granted.
+        startEngine()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,14 +42,12 @@ class MainActivity : ComponentActivity() {
         val required = mutableListOf(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
-            required.add(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            required.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
+        // Audio files are imported through the system file picker (no storage permission needed).
         if (required.any { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }) {
             requestPerms.launch(required.toTypedArray())
         } else {
-            startEngineAndService()
+            startEngine()
         }
 
         setContent {
@@ -63,32 +58,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-
-        // Handle VIEW intent for opening audio files
-        handleIntent(intent)
     }
 
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        handleIntent(intent)
+    private fun hasMic() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun startEngine() {
+        engine.start(wantInput = hasMic())
     }
 
-    private fun handleIntent(intent: Intent?) {
-        val uri: Uri? = intent?.data
-        if (uri != null && (intent?.action == Intent.ACTION_VIEW)) {
-            lifecycleScope.launch {
-                // Pass URI to editor via navigation arg (delegated to ProjectsViewModel)
-            }
-        }
+    override fun onStart() {
+        super.onStart()
+        engine.setUiVisible(true)
+        // The device is closed while the app is in the background and idle (battery); reopen it now.
+        if (!engine.isStarted) startEngine()
     }
 
-    private fun startEngineAndService() {
-        val svc = Intent(this, AudioEngineService::class.java)
-        ContextCompat.startForegroundService(this, svc)
-        engine.start()
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
+    override fun onStop() {
+        super.onStop()
+        engine.setUiVisible(false)
+        // Make sure nothing is lost if the system kills us in the background.
+        Thread { session.saveBlocking() }.start()
+        val st = engine.transportState.value
+        if (st != TransportState.PLAYING && st != TransportState.RECORDING) engine.stop()
     }
 }

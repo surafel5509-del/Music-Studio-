@@ -78,6 +78,7 @@ JNI(jstring, nativeDeviceStatus) {
 // ------------------------------------------------------------------ transport
 JNI(void, nativePlay) { C()->play(); }
 JNI(void, nativePause) { C()->pause(); }
+JNI(jboolean, nativeIsPlaying) { return C()->is_playing(); }
 JNI(void, nativeSeek, jlong frame) { C()->seek(frame); }
 JNI(jlong, nativeGetPosition) { return C()->position(); }
 JNI(jboolean, nativeIsCountingIn) { return C()->is_counting_in(); }

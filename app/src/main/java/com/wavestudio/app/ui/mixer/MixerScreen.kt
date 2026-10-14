@@ -1,31 +1,43 @@
 package com.wavestudio.app.ui.mixer
 
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import com.wavestudio.app.domain.Track
-import com.wavestudio.app.ui.mixer.MixerPanel
+import androidx.hilt.navigation.compose.hiltViewModel
+import com.wavestudio.app.ui.editor.EditorViewModel
 
+/** Full-screen mixer for the project that is open in the editor (same live session, same meters). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MixerScreen(onBack: () -> Unit) {
-    // Standalone mixer view — real implementation would read state from VM
-    val demo = (1..8).map { Track(id = it, name = "Track $it") }
+fun MixerScreen(onBack: () -> Unit, onOpenEffects: (Int) -> Unit, vm: EditorViewModel = hiltViewModel()) {
+    val doc by vm.doc.collectAsState()
+    val meters by vm.meters.collectAsState()
+    val trackMeters by vm.trackMeters.collectAsState()
     Scaffold(
         topBar = {
-            TopAppBar(title = { Text("Mixer") }, navigationIcon = {
-                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) }
+            TopAppBar(title = { Text("Mixer — ${doc.name}") }, navigationIcon = {
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
             })
         }
     ) { pad ->
         Box(Modifier.padding(pad).fillMaxSize()) {
             MixerPanel(
-                tracks = demo, peak = 0.5f, rms = 0.3f,
-                onVolume = {_,_->}, onPan = {_,_->}, onMute = {}, onSolo = {}
+                tracks = doc.tracks, trackMeters = trackMeters, master = meters, masterVolume = doc.masterVolume,
+                onVolume = vm::setTrackVolume, onPan = vm::setTrackPan,
+                onMute = vm::toggleMute, onSolo = vm::toggleSolo,
+                onMasterVolume = vm::setMasterVolume, onEffects = onOpenEffects
             )
         }
     }

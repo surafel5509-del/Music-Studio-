@@ -125,7 +125,7 @@ fun Knob(
                     detectVerticalDragGestures(
                         onDragStart = { startNormalized = normalized; startY = it.y },
                         onVerticalDrag = { _, drag ->
-                            val delta = -drag / this.size.height.toFloat()
+                            val delta = -drag / (this.size.height.toFloat() * 4f)   // fine control: ~4 knob heights for the full range
                             val n = (startNormalized + delta).coerceIn(0f, 1f)
                             onValueChange(range.start + n * (range.endInclusive - range.start))
                         }

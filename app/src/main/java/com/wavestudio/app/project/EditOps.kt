@@ -135,9 +135,9 @@ object EditOps {
     const val MIN_CLIP = 64L
 }
 
-/** Snapshot-based undo/redo over immutable documents. */
-class History<T>(private val limit: Int = 200) {
-    private data class Entry<T>(val label: String, val before: T, val after: T)
+/** Snapshot-based undo/redo over immutable documents. Continuous gestures (fader drags) coalesce into one step. */
+class History<T>(private val limit: Int = 200, private val clock: () -> Long = System::currentTimeMillis) {
+    private class Entry<T>(val label: String, val before: T, var after: T, val key: String?, var at: Long)
     private val undoStack = ArrayDeque<Entry<T>>()
     private val redoStack = ArrayDeque<Entry<T>>()
 
@@ -146,9 +146,16 @@ class History<T>(private val limit: Int = 200) {
     val undoLabel get() = undoStack.lastOrNull()?.label
     val redoLabel get() = redoStack.lastOrNull()?.label
 
-    fun record(label: String, before: T, after: T) {
+    /** [coalesceKey]: consecutive records with the same key within [windowMs] merge into a single undo step. */
+    fun record(label: String, before: T, after: T, coalesceKey: String? = null, windowMs: Long = 800) {
         if (before === after) return
-        undoStack.addLast(Entry(label, before, after))
+        val now = clock()
+        val last = undoStack.lastOrNull()
+        if (coalesceKey != null && last != null && last.key == coalesceKey && now - last.at <= windowMs && redoStack.isEmpty()) {
+            last.after = after; last.at = now
+            return
+        }
+        undoStack.addLast(Entry(label, before, after, coalesceKey, now))
         while (undoStack.size > limit) undoStack.removeFirst()
         redoStack.clear()
     }

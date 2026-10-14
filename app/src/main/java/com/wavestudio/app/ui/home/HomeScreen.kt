@@ -38,7 +38,6 @@ fun HomeScreen(
     onOpenPlugins: () -> Unit,
     onNewProject: () -> Unit,
     onOpenProject: (Long) -> Unit,
-    onBrowseFiles: () -> Unit,
     vm: HomeViewModel = hiltViewModel()
 ) {
     val recent by vm.recentProjects.collectAsState()
@@ -64,7 +63,6 @@ fun HomeScreen(
                 },
                 actions = {
                     IconButton(onClick = onOpenPlugins) { Icon(Icons.Default.Extension, "Plugins") }
-                    IconButton(onClick = onBrowseFiles) { Icon(Icons.Default.Folder, "Files") }
                     IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "Settings") }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -85,7 +83,7 @@ fun HomeScreen(
             if (isLandscape) {
                 Row(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
-                        QuickActionsCard(onNew = { showNewDialog = true }, onOpen = onOpenProjects, onFiles = onBrowseFiles)
+                        QuickActionsCard(onNew = { showNewDialog = true }, onOpen = onOpenProjects)
                         Spacer(Modifier.height(16.dp))
                         ToolsCard(onPlugins = onOpenPlugins, onSettings = onOpenSettings)
                     }
@@ -95,7 +93,7 @@ fun HomeScreen(
                 }
             } else {
                 Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    QuickActionsCard(onNew = { showNewDialog = true }, onOpen = onOpenProjects, onFiles = onBrowseFiles)
+                    QuickActionsCard(onNew = { showNewDialog = true }, onOpen = onOpenProjects)
                     ToolsCard(onPlugins = onOpenPlugins, onSettings = onOpenSettings)
                     RecentProjects(recent, onOpenProject, columns = columns)
                 }
@@ -112,13 +110,11 @@ fun HomeScreen(
 }
 
 @Composable
-fun QuickActionsCard(onNew: () -> Unit, onOpen: () -> Unit, onFiles: () -> Unit) {
+fun QuickActionsCard(onNew: () -> Unit, onOpen: () -> Unit) {
     SectionCard(title = "Quick Start") {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             ToolbarButton(Icons.Default.AddCircle, "New", onClick = onNew, modifier = Modifier.weight(1f))
             ToolbarButton(Icons.Default.FolderOpen, "Open", onClick = onOpen, modifier = Modifier.weight(1f))
-            ToolbarButton(Icons.Default.Audiotrack, "Import", onClick = onFiles, modifier = Modifier.weight(1f))
-            ToolbarButton(Icons.Default.Mic, "Record", onClick = onNew, modifier = Modifier.weight(1f))
         }
     }
 }
@@ -127,9 +123,7 @@ fun QuickActionsCard(onNew: () -> Unit, onOpen: () -> Unit, onFiles: () -> Unit)
 fun ToolsCard(onPlugins: () -> Unit, onSettings: () -> Unit) {
     SectionCard(title = "Tools") {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ToolbarButton(Icons.Default.Tune, "Plugins", onClick = onPlugins, modifier = Modifier.weight(1f))
-            ToolbarButton(Icons.Default.Equalizer, "Mixer", onClick = onPlugins, modifier = Modifier.weight(1f))
-            ToolbarButton(Icons.Default.GraphicEq, "Analyzer", onClick = onPlugins, modifier = Modifier.weight(1f))
+            ToolbarButton(Icons.Default.Tune, "Effects", onClick = onPlugins, modifier = Modifier.weight(1f))
             ToolbarButton(Icons.Default.Settings, "Settings", onClick = onSettings, modifier = Modifier.weight(1f))
         }
     }
@@ -143,7 +137,7 @@ fun RecentProjects(projects: List<Project>, onOpen: (Long) -> Unit, columns: Int
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.LibraryMusic, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(48.dp))
                     Spacer(Modifier.height(8.dp))
-                    Text("No projects yet. Tap + to create one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("No projects yet. Tap New Project to create one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
@@ -183,9 +177,10 @@ fun ProjectCard(p: Project, onClick: () -> Unit) {
             }
             Spacer(Modifier.height(8.dp))
             Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Text("${(p.sampleRate/1000).toInt()} kHz / ${p.bitDepth}-bit / ${p.channels} ch",
+            val secs = p.durationFrames / 48000L
+            Text("Length ${secs / 60}:%02d".format(secs % 60),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("BPM ${p.bpm.toInt()} · ${p.timeSignatureNum}/${p.timeSignatureDen}",
+            Text("BPM ${p.bpm.toInt()} · modified " + java.text.DateFormat.getDateInstance(java.text.DateFormat.SHORT).format(java.util.Date(p.modified)),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
@@ -194,8 +189,6 @@ fun ProjectCard(p: Project, onClick: () -> Unit) {
 @Composable
 fun NewProjectDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
-    var sr by remember { mutableStateOf(48000f) }
-    var bd by remember { mutableStateOf(24) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("New Project") },
@@ -203,32 +196,11 @@ fun NewProjectDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
             Column {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Project name") }, singleLine = true)
                 Spacer(Modifier.height(8.dp))
-                Text("Sample Rate", style = MaterialTheme.typography.labelMedium)
-                Row {
-                    listOf(44100f, 48000f, 96000f, 192000f).forEach { s ->
-                        FilterChip(
-                            selected = sr == s, onClick = { sr = s },
-                            label = { Text("${(s/1000).toInt()}k") },
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Text("Bit Depth", style = MaterialTheme.typography.labelMedium)
-                Row {
-                    listOf(16, 24, 32).forEach { b ->
-                        FilterChip(
-                            selected = bd == b, onClick = { bd = b },
-                            label = { Text("${b}bit") },
-                            modifier = Modifier.padding(end = 4.dp)
-                        )
-                    }
-                }
+                Text("Projects use a 48 kHz timeline; sample rate and bit depth are chosen when you export.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = {
-            Button(onClick = { onCreate(name.ifBlank { "Untitled Project" }) }) { Text("Create") }
-        },
+        confirmButton = { Button(onClick = { onCreate(name.ifBlank { "Untitled Project" }) }) { Text("Create") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

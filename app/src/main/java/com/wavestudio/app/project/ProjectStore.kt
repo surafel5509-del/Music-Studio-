@@ -95,18 +95,27 @@ class ProjectStore(val dir: File) {
 
     fun finishTake(wavName: String) { File(recordingsDir, "$wavName.take.json").delete() }
 
-    /** WAV files in recordings/ that no clip references (a crash or kill happened before they were committed). */
+    /**
+     * Takes whose sidecar still exists and that no clip references: recording began but the app died
+     * before the take was committed to the project. A take that was committed and later deleted by the
+     * user has no sidecar and is deliberately NOT resurrected.
+     */
     fun orphanedTakes(doc: ProjectDoc): List<PendingTake> {
         val referenced = doc.clips.map { it.media.replace('\\', '/') }.toSet()
-        val wavs = recordingsDir.listFiles { f -> f.isFile && f.name.endsWith(".wav", ignoreCase = true) } ?: return emptyList()
-        return wavs.sortedBy { it.name }.filter { "recordings/${it.name}" !in referenced && it.length() > 44 }.map { wav ->
-            val side = File(recordingsDir, "${wav.name}.take.json")
+        val sidecars = recordingsDir.listFiles { f -> f.isFile && f.name.endsWith(".wav.take.json") } ?: return emptyList()
+        return sidecars.sortedBy { it.name }.mapNotNull { side ->
+            val wav = File(recordingsDir, side.name.removeSuffix(".take.json"))
+            if (!wav.isFile || "recordings/${wav.name}" in referenced) {
+                if (wav.isFile) side.delete()          // already committed: stale marker
+                return@mapNotNull null
+            }
+            if (wav.length() <= 44) { side.delete(); wav.delete(); return@mapNotNull null }   // nothing was captured
             var track = 0; var start = 0L
-            if (side.isFile) runCatching {
+            runCatching {
                 val m = Json.parseObject(side.readText())
                 track = m.int("trackId"); start = m.long("startFrame")
             }
-            PendingTake(wav, side.takeIf { it.isFile }, track, start)
+            PendingTake(wav, side, track, start)
         }
     }
 }

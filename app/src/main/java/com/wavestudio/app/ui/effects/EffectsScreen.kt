@@ -1,221 +1,177 @@
 package com.wavestudio.app.ui.effects
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.wavestudio.app.domain.EffectType
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import com.wavestudio.app.project.EditOps
+import com.wavestudio.app.project.EffectDoc
+import com.wavestudio.app.project.NativeEffectInfo
+import com.wavestudio.app.project.ProjectDoc
+import com.wavestudio.app.session.ProjectSession
 import com.wavestudio.app.ui.common.Knob
 import com.wavestudio.app.ui.common.SectionCard
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
 
+@HiltViewModel
+class EffectsViewModel @Inject constructor(val session: ProjectSession) : ViewModel() {
+    val doc = session.doc
+    fun chain(d: ProjectDoc, trackId: Int): List<EffectDoc> = if (trackId == 0) d.masterEffects else d.track(trackId)?.effects ?: emptyList()
+    fun add(trackId: Int, type: String) { session.edit("Add effect") { EditOps.addEffect(it, trackId, type).first } }
+    fun remove(effectId: Int) { session.edit("Remove effect") { EditOps.removeEffect(it, effectId) } }
+    fun setBypass(effectId: Int, bypass: Boolean) { session.edit("Bypass") { EditOps.setEffectBypass(it, effectId, bypass) } }
+    fun setParam(effectId: Int, paramId: String, v: Float) {
+        session.edit("Effect parameter", "fx:$effectId:$paramId") { EditOps.setEffectParam(it, effectId, paramId, v) }
+    }
+    fun info(effectId: Int): NativeEffectInfo? = session.effectInfo(effectId)
+    fun types(): List<String> = session.effectTypes()
+}
+
+fun effectTitle(type: String) = type.replace('_', ' ').replaceFirstChar { it.uppercase() }
+
+/** Insert effects of a track (or the master bus when [trackId] is 0). Parameters come from the native effect itself. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EffectsScreen(trackId: Int, onBack: () -> Unit) {
-    var chain by remember {
-        mutableStateOf(
-            listOf(
-                EffectSlot(type = EffectType.EQ, enabled = true, name = "Parametric EQ"),
-                EffectSlot(type = EffectType.COMPRESSOR, enabled = true, name = "Compressor"),
-                EffectSlot(type = EffectType.LIMITER, enabled = false, name = "Limiter")
-            )
-        )
-    }
-    var selected by remember { mutableStateOf(chain.firstOrNull()) }
+fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltViewModel()) {
+    val doc by vm.doc.collectAsState()
+    val chain = vm.chain(doc, trackId)
+    var selectedId by remember { mutableStateOf<Int?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
+    val selected = chain.firstOrNull { it.id == selectedId } ?: chain.firstOrNull()
+    val title = if (trackId == 0) "Master" else doc.track(trackId)?.name ?: "Track"
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Effects — Track $trackId") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } },
-                actions = {
-                    IconButton(onClick = { showBrowser = true }) { Icon(Icons.Default.Add, "Add") }
-                }
+                title = { Text("Effects — $title") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
+                actions = { IconButton(onClick = { showBrowser = true }) { Icon(Icons.Default.Add, "Add effect") } }
             )
         }
     ) { pad ->
         Row(Modifier.padding(pad).fillMaxSize()) {
-            // Chain list
-            LazyColumn(modifier = Modifier.width(200.dp).fillMaxHeight().padding(8.dp)) {
-                items(chain) { slot ->
+            LazyColumn(modifier = Modifier.width(220.dp).fillMaxHeight().padding(8.dp)) {
+                items(chain, key = { it.id }) { fx ->
                     ElevatedCard(
-                        onClick = { selected = slot },
+                        onClick = { selectedId = fx.id },
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         colors = CardDefaults.elevatedCardColors(
-                            containerColor = if (selected == slot) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surface
+                            containerColor = if (selected?.id == fx.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
                         )
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
-                            Icon(iconFor(slot.type), null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(6.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(slot.name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                Text(slot.type.name, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(effectTitle(fx.type), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                Text(if (fx.bypass) "bypassed" else "active", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Switch(checked = slot.enabled, onCheckedChange = {
-                                chain = chain.map { if (it === slot) it.copy(enabled = !it.enabled) else it }
-                            })
+                            Switch(checked = !fx.bypass, onCheckedChange = { vm.setBypass(fx.id, !it) })
                         }
                     }
                 }
                 item {
                     OutlinedButton(onClick = { showBrowser = true }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                        Icon(Icons.Default.Add, null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Add, null, modifier = Modifier.height(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Add Effect", fontSize = 12.sp)
+                        Text("Add effect", fontSize = 12.sp)
                     }
                 }
             }
             Divider(Modifier.width(1.dp).fillMaxHeight())
-            // Detail editor
             Box(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
-                selected?.let { EffectDetail(it) } ?: Text("Select an effect to edit", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (selected == null) Text("No effects yet. Tap + to add one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                else EffectDetail(selected, vm, onRemoved = { selectedId = null })
             }
         }
     }
 
     if (showBrowser) {
-        EffectBrowserDialog(
-            onDismiss = { showBrowser = false },
-            onAdd = { type ->
-                chain = chain + EffectSlot(type, true, type.name.replace("_", " ").lowercase().replaceFirstChar { it.uppercase() })
-                showBrowser = false
-            }
+        val types = remember { vm.types() }
+        AlertDialog(
+            onDismissRequest = { showBrowser = false },
+            title = { Text("Add effect") },
+            text = {
+                LazyVerticalGrid(columns = GridCells.Fixed(2), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(types) { t ->
+                        ElevatedCard(onClick = { vm.add(trackId, t); showBrowser = false }, modifier = Modifier.fillMaxWidth()) {
+                            Text(effectTitle(t), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(14.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showBrowser = false }) { Text("Close") } }
         )
     }
 }
 
-data class EffectSlot(val type: EffectType, val enabled: Boolean, val name: String)
-
 @Composable
-fun EffectDetail(slot: EffectSlot) {
+private fun EffectDetail(fx: EffectDoc, vm: EffectsViewModel, onRemoved: () -> Unit) {
+    val info = remember(fx.id, fx.type) { vm.info(fx.id) }
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(iconFor(slot.type), null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Text(slot.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(effectTitle(fx.type), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+            if (info != null) TextButton(onClick = { info.params.forEach { vm.setParam(fx.id, it.id, it.def) } }) { Text("Reset") }
+            IconButton(onClick = { vm.remove(fx.id); onRemoved() }) { Icon(Icons.Default.Delete, "Remove effect") }
         }
-        Spacer(Modifier.height(24.dp))
-        // Generic 6-knob control panel (per-effect parameter layout)
-        val defaults = when (slot.type) {
-            EffectType.EQ -> listOf(
-                KnobParam("Low", -24f..24f, 0f, "dB"),
-                KnobParam("Lo-Mid", -24f..24f, 0f, "dB"),
-                KnobParam("Mid", -24f..24f, 0f, "dB"),
-                KnobParam("Hi-Mid", -24f..24f, 0f, "dB"),
-                KnobParam("High", -24f..24f, 0f, "dB"),
-                KnobParam("Q", 0.1f..10f, 1.4f, "")
-            )
-            EffectType.COMPRESSOR -> listOf(
-                KnobParam("Thresh", -60f..0f, -18f, "dB"),
-                KnobParam("Ratio", 1f..20f, 4f, ":1"),
-                KnobParam("Attack", 0.1f..200f, 5f, "ms"),
-                KnobParam("Release", 10f..2000f, 100f, "ms"),
-                KnobParam("Knee", 0f..24f, 6f, "dB"),
-                KnobParam("Makeup", 0f..24f, 0f, "dB")
-            )
-            EffectType.REVERB -> listOf(
-                KnobParam("Size", 0f..1f, 0.7f, ""),
-                KnobParam("Damp", 0f..1f, 0.5f, ""),
-                KnobParam("Wet", 0f..1f, 0.3f, ""),
-                KnobParam("Dry", 0f..1f, 1f, ""),
-                KnobParam("Width", 0f..1f, 1f, ""),
-                KnobParam("Pre-Dly", 0f..100f, 10f, "ms")
-            )
-            EffectType.DELAY -> listOf(
-                KnobParam("Time L", 1f..2000f, 400f, "ms"),
-                KnobParam("Time R", 1f..2000f, 500f, "ms"),
-                KnobParam("FB", 0f..1f, 0.4f, ""),
-                KnobParam("Mix", 0f..1f, 0.3f, ""),
-                KnobParam("HPF", 20f..2000f, 200f, "Hz"),
-                KnobParam("LPF", 1000f..20000f, 12000f, "Hz")
-            )
-            else -> listOf(
-                KnobParam("Drive", 0f..100f, 20f, "dB"),
-                KnobParam("Mix", 0f..1f, 0.5f, ""),
-                KnobParam("Gain", -24f..24f, 0f, "dB"),
-                KnobParam("Rate", 0.05f..10f, 1f, "Hz"),
-                KnobParam("Depth", 0f..1f, 0.5f, ""),
-                KnobParam("Tone", 200f..12000f, 3000f, "Hz")
-            )
+        Spacer(Modifier.height(12.dp))
+        if (info == null) {
+            Text("This effect is not loaded in the audio engine.", color = MaterialTheme.colorScheme.error)
+            return
         }
         SectionCard(title = "Parameters") {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                for (p in defaults) {
-                    var v by remember { mutableFloatStateOf(p.default) }
+            LazyVerticalGrid(columns = GridCells.Adaptive(96.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(320.dp)) {
+                items(info.params, key = { it.id }) { p ->
+                    val v = fx.params[p.id] ?: p.def
                     Knob(
-                        value = v, range = p.range, label = p.name,
-                        formatter = { "%.1f${p.unit}".format(it) },
-                        onValueChange = { v = it }
+                        value = v, range = p.min..p.max, label = p.name, size = 56.dp,
+                        formatter = { "%.2f".format(it) + if (p.unit.isNotEmpty()) " ${p.unit}" else "" },
+                        onValueChange = { vm.setParam(fx.id, p.id, it) }
                     )
                 }
             }
         }
-        Spacer(Modifier.height(16.dp))
-        SectionCard(title = "Presets") {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Default", "Vocal", "Drums", "Bass", "Master").forEach {
-                    FilterChip(selected = it == "Default", onClick = { }, label = { Text(it, fontSize = 11.sp) })
-                }
-            }
-        }
     }
-}
-
-data class KnobParam(val name: String, val range: ClosedFloatingPointRange<Float>, val default: Float, val unit: String)
-
-@Composable
-fun EffectBrowserDialog(onDismiss: () -> Unit, onAdd: (EffectType) -> Unit) {
-    val types = EffectType.values()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add Effect") },
-        text = {
-            LazyVerticalGrid(columns = GridCells.Fixed(2), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(types.toList()) { t ->
-                    ElevatedCard(onClick = { onAdd(t) }, modifier = Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(12.dp)) {
-                            Icon(iconFor(t), null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(8.dp))
-                            Text(t.name.replace("_", " "), fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
-    )
-}
-
-fun iconFor(t: EffectType): ImageVector = when (t) {
-    EffectType.EQ -> Icons.Default.Equalizer
-    EffectType.COMPRESSOR -> Icons.Default.Compress
-    EffectType.LIMITER -> Icons.Default.Remove
-    EffectType.REVERB -> Icons.Default.GraphicEq
-    EffectType.DELAY -> Icons.Default.Schedule
-    EffectType.CHORUS -> Icons.Default.People
-    EffectType.FLANGER -> Icons.Default.BlurOn
-    EffectType.PHASER -> Icons.Default.FilterList
-    EffectType.DISTORTION -> Icons.Default.FlashOn
-    EffectType.BITCRUSHER -> Icons.Default.Memory
-    EffectType.FILTER -> Icons.Default.FilterList
-    EffectType.NOISE_GATE -> Icons.Default.NotificationsOff
-    EffectType.DE_ESSER -> Icons.Default.RecordVoiceOver
-    EffectType.TUNER -> Icons.Default.MusicNote
-    EffectType.GAIN -> Icons.Default.Tune
-    EffectType.INVERT -> Icons.Default.SwapHoriz
 }

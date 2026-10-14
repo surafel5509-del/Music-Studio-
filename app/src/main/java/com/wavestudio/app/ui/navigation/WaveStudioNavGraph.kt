@@ -8,7 +8,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import com.wavestudio.app.ui.editor.EditorScreen
 import com.wavestudio.app.ui.effects.EffectsScreen
-import com.wavestudio.app.ui.filebrowser.FileBrowserScreen
 import com.wavestudio.app.ui.home.HomeScreen
 import com.wavestudio.app.ui.mixer.MixerScreen
 import com.wavestudio.app.ui.plugins.PluginsScreen
@@ -24,8 +23,7 @@ fun WaveStudioNavGraph(navController: NavHostController) {
                 onOpenSettings = { navController.navigate(AppDestinations.Settings.route) },
                 onOpenPlugins = { navController.navigate(AppDestinations.Plugins.route) },
                 onNewProject = { navController.navigate(AppDestinations.Editor.createRoute(-1L)) },
-                onOpenProject = { id -> navController.navigate(AppDestinations.Editor.createRoute(id)) },
-                onBrowseFiles = { navController.navigate(AppDestinations.FileBrowser.route) }
+                onOpenProject = { id -> navController.navigate(AppDestinations.Editor.createRoute(id)) }
             )
         }
         composable(AppDestinations.Projects.route) {
@@ -57,7 +55,10 @@ fun WaveStudioNavGraph(navController: NavHostController) {
             AppDestinations.Mixer.route,
             arguments = listOf(navArgument("projectId") { type = NavType.LongType })
         ) {
-            MixerScreen(onBack = { navController.popBackStack() })
+            MixerScreen(
+                onBack = { navController.popBackStack() },
+                onOpenEffects = { tid -> navController.navigate(AppDestinations.Effects.createRoute(tid)) }
+            )
         }
         composable(
             AppDestinations.Effects.route,
@@ -65,9 +66,6 @@ fun WaveStudioNavGraph(navController: NavHostController) {
         ) { entry ->
             val tid = entry.arguments?.getInt("trackId") ?: 0
             EffectsScreen(trackId = tid, onBack = { navController.popBackStack() })
-        }
-        composable(AppDestinations.FileBrowser.route) {
-            FileBrowserScreen(onBack = { navController.popBackStack() })
         }
     }
 }

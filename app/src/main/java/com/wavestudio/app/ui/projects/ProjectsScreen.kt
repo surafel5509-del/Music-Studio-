@@ -29,11 +29,7 @@ fun ProjectsScreen(
         topBar = {
             TopAppBar(
                 title = { Text("My Projects") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } },
-                actions = {
-                    IconButton(onClick = {}) { Icon(Icons.Default.Search, "Search") }
-                    IconButton(onClick = {}) { Icon(Icons.Default.Sort, "Sort") }
-                }
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, null) } }
             )
         },
         floatingActionButton = {

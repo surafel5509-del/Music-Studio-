@@ -21,7 +21,7 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile private var INSTANCE: AppDatabase? = null
         fun create(ctx: Context): AppDatabase = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(ctx.applicationContext, AppDatabase::class.java, "wavestudio.db")
-                .fallbackToDestructiveMigration()
+                // No destructive fallback: a schema change must ship a Migration so the project index is never wiped.
                 .build().also { INSTANCE = it }
         }
     }

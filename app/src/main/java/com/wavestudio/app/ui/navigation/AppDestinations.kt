@@ -15,5 +15,4 @@ sealed class AppDestinations(val route: String) {
     object Effects : AppDestinations("effects/{trackId}") {
         fun createRoute(trackId: Int) = "effects/$trackId"
     }
-    object FileBrowser : AppDestinations("filebrowser")
 }

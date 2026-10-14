@@ -1,224 +1,263 @@
 package com.wavestudio.app.ui.editor
 
+import android.Manifest
 import android.app.Application
-import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.wavestudio.app.audio.AudioIO
 import com.wavestudio.app.data.repository.ProjectRepository
-import com.wavestudio.app.domain.*
-import com.wavestudio.app.editor.UndoStack
+import com.wavestudio.app.domain.Project
 import com.wavestudio.app.engine.AudioEngineController
 import com.wavestudio.app.engine.TransportState
+import com.wavestudio.app.project.ClipDoc
+import com.wavestudio.app.project.EditOps
+import com.wavestudio.app.project.ProjectDoc
+import com.wavestudio.app.project.TIMELINE_RATE
+import com.wavestudio.app.project.TrackDoc
 import com.wavestudio.app.service.AudioEngineService
+import com.wavestudio.app.service.ExportService
+import com.wavestudio.app.session.ExportOptions
+import com.wavestudio.app.session.ExportState
+import com.wavestudio.app.session.ProjectSession
+import com.wavestudio.app.session.RecordStart
+import com.wavestudio.app.session.SessionStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.launch
-import java.io.File
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
+
+/** Waveform overview of one media file: min/max pairs, [binsPerSecond] bins per second of source audio. */
+class PeakData(val minMax: FloatArray, val binsPerSecond: Float) {
+    val bins get() = minMax.size / 2
+}
 
 @HiltViewModel
 class EditorViewModel @Inject constructor(
     app: Application,
     private val repo: ProjectRepository,
-    val engine: AudioEngineController,
-    private val audioIO: AudioIO,
-    private val undo: UndoStack
+    val session: ProjectSession,
+    val engine: AudioEngineController
 ) : AndroidViewModel(app) {
 
     private val ctx get() = getApplication<Application>()
 
-    private val _project = MutableStateFlow(Project(name = "Untitled", sampleRate = 48000f))
-    val project: StateFlow<Project> = _project.asStateFlow()
+    val doc: StateFlow<ProjectDoc> = session.doc
+    val status: StateFlow<SessionStatus> = session.status
+    val undoState = session.undoState
+    val exportState: StateFlow<ExportState> = session.exportState
+    val recordingTrack = session.recordingTrack
 
-    private val _tracks = MutableStateFlow<List<Track>>(emptyList())
-    val tracks: StateFlow<List<Track>> = _tracks.asStateFlow()
+    val tracks: StateFlow<List<TrackDoc>> = doc.map { it.tracks }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val clips: StateFlow<List<ClipDoc>> = doc.map { it.clips }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    private val _clips = MutableStateFlow<List<AudioClip>>(emptyList())
-    val clips: StateFlow<List<AudioClip>> = _clips.asStateFlow()
-
-    private val _markers = MutableStateFlow<List<Marker>>(emptyList())
-    val markers: StateFlow<List<Marker>> = _markers.asStateFlow()
+    val transportState = engine.transportState
+    val playheadFrames = engine.playheadFrames
+    val meters = engine.meters
+    val trackMeters = engine.trackMeters
+    val spectrum = engine.spectrum
+    val loudness = engine.loudness
+    val device = engine.device
+    val countingIn = engine.countingIn
 
     private val _selectedClip = MutableStateFlow<Int?>(null)
     val selectedClip: StateFlow<Int?> = _selectedClip.asStateFlow()
+    private val _armedTrack = MutableStateFlow<Int?>(null)
+    val armedTrack: StateFlow<Int?> = _armedTrack.asStateFlow()
+    private val _snap = MutableStateFlow(true)
+    val snapEnabled: StateFlow<Boolean> = _snap.asStateFlow()
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+    private val _peaks = MutableStateFlow<Map<String, PeakData>>(emptyMap())
+    val peaks: StateFlow<Map<String, PeakData>> = _peaks.asStateFlow()
+    private val peakRequests = HashSet<String>()
 
-    private val _snapEnabled = MutableStateFlow(true)
-    val snapEnabled: StateFlow<Boolean> = _snapEnabled.asStateFlow()
+    fun consumeMessage() { _message.value = null }
+    private fun say(m: String) { _message.value = m }
 
-    private val _metronome = MutableStateFlow(false)
-    val metronome: StateFlow<Boolean> = _metronome.asStateFlow()
-
-    private val _bpm = MutableStateFlow(120f)
-    val bpm: StateFlow<Float> = _bpm.asStateFlow()
-
-    private val _loop = MutableStateFlow(false)
-    val loop: StateFlow<Boolean> = _loop.asStateFlow()
-
-    val transportState: StateFlow<TransportState> = engine.transportState
-    val playheadFrames: StateFlow<Long> = engine.playheadFrames
-    val masterPeak: StateFlow<Float> = engine.masterPeak
-    val masterRms: StateFlow<Float> = engine.masterRms
-    val inputLevel: StateFlow<Float> = engine.inputLevel
-    val spectrum: StateFlow<FloatArray> = engine.spectrumBins
-    val lufs: StateFlow<Float> = engine.lufs
+    // ------------------------------------------------------------------ project lifecycle
 
     fun loadProject(id: Long) {
-        if (id == -1L) {
-            viewModelScope.launch {
-                val newId = repo.create(Project(name = "Untitled Project"))
-                val p = repo.findById(newId) ?: return@launch
-                _project.value = p
-                _bpm.value = p.bpm
-                ensureDefaultTrack()
-            }
-        } else {
-            viewModelScope.launch {
-                val p = repo.findById(id) ?: return@launch
-                _project.value = p
-                _bpm.value = p.bpm
-                ensureDefaultTrack()
+        viewModelScope.launch {
+            var pid = id
+            if (pid == -1L) pid = repo.create(Project(name = "Untitled Project"))
+            session.open(pid)
+            val d = session.doc.value
+            if (session.status.value.loaded && d.tracks.isEmpty() && d.clips.isEmpty()) {
+                session.edit("New project") { EditOps.addTrack(it, "Audio 1").first }
             }
         }
     }
 
-    private fun ensureDefaultTrack() {
-        if (_tracks.value.isEmpty()) {
-            addTrack("Audio 1")
-            addTrack("Audio 2")
+    fun save() { session.saveNow() }
+
+    override fun onCleared() {
+        // The session is app-scoped and keeps the document; make sure the last edits are on disk.
+        session.saveNow()
+        super.onCleared()
+    }
+
+    // ------------------------------------------------------------------ transport
+
+    fun play() { AudioEngineService.start(ctx); session.play() }
+    fun pause() { session.pause() }
+    fun stop() { session.stop() }
+    fun seek(frame: Long) { session.seek(frame.coerceAtLeast(0)) }
+
+    fun toggleRecord() {
+        viewModelScope.launch {
+            if (session.isRecording) {
+                session.stopRecording()?.let { say(it) }
+                return@launch
+            }
+            var tid = _armedTrack.value?.takeIf { id -> session.doc.value.track(id) != null } ?: session.doc.value.tracks.firstOrNull()?.id
+            if (tid == null) { session.edit("Add track") { d -> EditOps.addTrack(d).first }; tid = session.doc.value.tracks.first().id }
+            var r = session.startRecording(tid)
+            if (r == RecordStart.NO_INPUT && hasMic()) { engine.enableInput(); r = session.startRecording(tid) }
+            when (r) {
+                RecordStart.OK -> AudioEngineService.start(ctx)
+                RecordStart.NO_INPUT -> say(if (hasMic()) "No audio input is available on this device." else "Microphone permission is required to record. Grant it in system settings.")
+                RecordStart.NO_TRACK -> say("Select a track to record on.")
+                RecordStart.ALREADY_RECORDING -> {}
+                RecordStart.FAILED -> say("Recording could not be started.")
+            }
         }
     }
 
-    fun play() {
-        ctx.startService(Intent(ctx, AudioEngineService::class.java).setAction(AudioEngineService.ACTION_PLAY))
-        engine.play()
-    }
-    fun pause() { engine.pause() }
-    fun stop() {
-        ctx.startService(Intent(ctx, AudioEngineService::class.java).setAction(AudioEngineService.ACTION_STOP))
-        engine.stopTransport()
-    }
-    fun record() {
-        ctx.startService(Intent(ctx, AudioEngineService::class.java).setAction(AudioEngineService.ACTION_RECORD))
-        engine.startRecording()
-    }
-    fun seek(f: Long) { engine.seek(f) }
+    private fun hasMic() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
 
-    fun addTrack(name: String = "Track"): Int {
-        val id = engine.addTrack(name)
-        val t = Track(id = id, name = name, color = trackPalette[(_tracks.value.size % trackPalette.size)])
-        _tracks.value = _tracks.value + t
-        return id
-    }
+    val recordingNote = session.recordingNote
+    fun dismissRecordingNote() = session.clearRecordingNote()
 
-    fun removeTrack(id: Int) {
-        _tracks.value = _tracks.value.filter { it.id != id }
-    }
+    // ------------------------------------------------------------------ tracks
 
-    fun setTrackVolume(id: Int, v: Float) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(volume = v) else it }
-        engine.setTrackVolume(id, v)
-    }
-    fun setTrackPan(id: Int, p: Float) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(pan = p) else it }
-        engine.setTrackPan(id, p)
-    }
-    fun setTrackMute(id: Int, m: Boolean) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(mute = m) else it }
-        engine.setTrackMute(id, m)
-    }
-    fun setTrackSolo(id: Int, s: Boolean) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(solo = s) else it }
-        engine.setTrackSolo(id, s)
-    }
-    fun setTrackArm(id: Int, a: Boolean) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(arm = a) else it }
-        engine.setTrackArm(id, a)
-    }
-    fun renameTrack(id: Int, name: String) {
-        _tracks.value = _tracks.value.map { if (it.id == id) it.copy(name = name) else it }
-    }
+    fun addTrack() { session.edit("Add track") { EditOps.addTrack(it).first } }
+    fun removeTrack(id: Int) { session.edit("Remove track") { EditOps.removeTrack(it, id) }; if (_armedTrack.value == id) _armedTrack.value = null }
+    fun renameTrack(id: Int, name: String) { session.edit("Rename track") { EditOps.updateTrack(it, id) { t -> t.copy(name = name.take(40)) } } }
+    fun setTrackVolume(id: Int, v: Float) { session.edit("Volume", "vol:$id") { EditOps.updateTrack(it, id) { t -> t.copy(volume = v.coerceIn(0f, 4f)) } } }
+    fun setTrackPan(id: Int, p: Float) { session.edit("Pan", "pan:$id") { EditOps.updateTrack(it, id) { t -> t.copy(pan = p.coerceIn(-1f, 1f)) } } }
+    fun toggleMute(id: Int) { session.edit("Mute") { EditOps.updateTrack(it, id) { t -> t.copy(mute = !t.mute) } } }
+    fun toggleSolo(id: Int) { session.edit("Solo") { EditOps.updateTrack(it, id) { t -> t.copy(solo = !t.solo) } } }
+    fun toggleArm(id: Int) { _armedTrack.value = if (_armedTrack.value == id) null else id }
+    fun setMasterVolume(v: Float) { session.edit("Master volume", "master") { it.copy(masterVolume = v.coerceIn(0f, 2f)) } }
+
+    // ------------------------------------------------------------------ clips
 
     fun selectClip(id: Int?) { _selectedClip.value = id }
-    fun moveClip(id: Int, newStart: Long, newTrack: Int) {
-        _clips.value = _clips.value.map { if (it.id == id) it.copy(startFrame = newStart, trackId = newTrack) else it }
+    fun setSnap(on: Boolean) { _snap.value = on }
+
+    private fun grid(d: ProjectDoc): Double = d.framesPerBeat / 4.0     // 16th-note grid
+    private fun snap(d: ProjectDoc, f: Long) = EditOps.snap(f, grid(d), _snap.value)
+
+    /** Called continuously while dragging: [newStart]/[newTrack] are applied (snapped) and merged into a single undo step. */
+    fun moveClip(id: Int, newStart: Long, newTrack: Int?) {
+        session.edit("Move clip", "move:$id") { EditOps.moveClip(it, id, snap(it, newStart), newTrack) }
     }
 
-    fun setSnap(enabled: Boolean) { _snapEnabled.value = enabled }
-    fun setMetronome(on: Boolean) {
-        _metronome.value = on
-        engine.setMetronome(on, _bpm.value)
+    fun trimClipStart(id: Int, newStart: Long) { session.edit("Trim clip", "trim:$id") { EditOps.trimClip(it, id, newStart = snap(it, newStart)) } }
+    fun trimClipEnd(id: Int, newEnd: Long) { session.edit("Trim clip", "trim:$id") { EditOps.trimClip(it, id, newEnd = snap(it, newEnd)) } }
+
+    fun splitAtPlayhead() {
+        val id = _selectedClip.value ?: return say("Select a clip to split.")
+        val at = engine.position()
+        var created = -1
+        session.edit("Split clip") { d -> val (n, nid) = EditOps.splitClip(d, id, at); created = nid; n }
+        if (created < 0) say("Place the playhead inside the selected clip to split it.")
     }
-    fun setBpm(bpm: Float) {
-        _bpm.value = bpm
-        if (_metronome.value) engine.setMetronome(true, bpm)
+
+    fun deleteSelectedClip() {
+        val id = _selectedClip.value ?: return
+        session.edit("Delete clip") { EditOps.deleteClip(it, id) }
+        _selectedClip.value = null
     }
+
+    fun duplicateSelectedClip() {
+        val id = _selectedClip.value ?: return
+        var created = -1
+        session.edit("Duplicate clip") { d -> val (n, nid) = EditOps.duplicateClip(d, id); created = nid; n }
+        if (created > 0) _selectedClip.value = created
+    }
+
+    fun setClipGain(id: Int, db: Float) { session.edit("Clip gain", "cgain:$id") { EditOps.setClipGain(it, id, db) } }
+    fun setClipFades(id: Int, fadeIn: Long, fadeOut: Long) { session.edit("Clip fades", "cfade:$id") { EditOps.setClipFades(it, id, fadeIn, fadeOut) } }
+
+    // ------------------------------------------------------------------ arrangement
+
+    fun setBpm(bpm: Float) { session.edit("Tempo", "bpm") { it.copy(bpm = bpm.coerceIn(20f, 400f)) } }
+    fun setMetronome(on: Boolean) { session.edit("Metronome") { it.copy(metronome = on) } }
+    fun setCountIn(bars: Int) { session.edit("Count-in") { it.copy(countInBars = bars.coerceIn(0, 4)) } }
 
     fun toggleLoop() {
-        _loop.value = !_loop.value
-        // set default loop around view if enabling
-        if (_loop.value) engine.setLoop(0L, (60 * project.value.sampleRate).toLong(), true)
-        else engine.setLoop(0,0,false)
+        val playhead = engine.position()
+        session.edit("Loop") { d ->
+            if (d.loopEnabled) d.copy(loopEnabled = false)
+            else {
+                var s = d.loopStart; var e = d.loopEnd
+                if (e <= s) {
+                    val c = _selectedClip.value?.let { d.clip(it) }
+                    if (c != null) { s = c.startFrame; e = c.endFrame }
+                    else { s = snap(d, playhead); e = s + (d.framesPerBeat * d.beatsPerBar * 2).toLong() }
+                }
+                d.copy(loopStart = s, loopEnd = e, loopEnabled = true)
+            }
+        }
+    }
+    fun setLoopRegion(start: Long, end: Long) {
+        if (end - start < 480) return
+        session.edit("Loop region", "loopreg") { d -> d.copy(loopStart = snap(d, start).coerceAtLeast(0), loopEnd = snap(d, end), loopEnabled = true) }
     }
 
-    fun setMasterVolume(v: Float) = engine.setMasterVolume(v)
+    // ------------------------------------------------------------------ files
 
     fun importAudio(uri: Uri) {
         viewModelScope.launch {
-            val loaded = audioIO.loadAudio(uri) ?: return@launch
-            // Copy to project folder and add clip to first available track
-            val projDir = File(ctx.filesDir, "projects/${_project.value.id}")
-            projDir.mkdirs()
-            val dst = File(projDir, "audio_${System.currentTimeMillis()}.wav")
-            runCatching {
-                ctx.contentResolver.openInputStream(uri)?.use { i ->
-                    dst.outputStream().use { o -> i.copyTo(o) }
-                }
-            }
-            val trackId = _tracks.value.firstOrNull()?.id ?: run { addTrack("Audio 1") }
-            val startFrame = engine.playheadFrames.value
-            val clip = AudioClip(
-                id = _clips.value.size + 1,
-                trackId = trackId,
-                sourcePath = dst.absolutePath,
-                startFrame = startFrame,
-                lengthFrames = loaded.frames,
-                name = dst.nameWithoutExtension
-            )
-            _clips.value = _clips.value + clip
-            engine.loadWav(dst.absolutePath)
+            say("Importing…")
+            val target = _armedTrack.value ?: session.doc.value.tracks.firstOrNull()?.id
+            val err = session.importAudio(uri, target, snap(session.doc.value, engine.position()))
+            say(if (err != null) "Import failed: $err" else "Import finished")
         }
     }
 
-    fun export(path: String, format: String = "wav", onDone: (Boolean) -> Unit) {
-        viewModelScope.launch {
-            val ok = audioIO.exportWav(_project.value, File(path), 24)
-            onDone(ok)
+    fun export(uri: Uri, name: String, options: ExportOptions) {
+        ExportService.start(ctx)
+        session.export(uri, options, name)
+    }
+    fun cancelExport() = session.cancelExport()
+    fun dismissExport() = session.clearExportState()
+
+    fun undo() { session.undo() }
+    fun redo() { session.redo() }
+    fun renameProject(name: String) { session.edit("Rename project") { it.copy(name = name.take(60)) } }
+    fun dismissSessionMessages() = session.dismissMessages()
+
+    // ------------------------------------------------------------------ waveforms
+
+    /** Computes (once) the waveform overview of a media file with the native engine, off the UI thread. */
+    fun ensurePeaks(media: String) {
+        if (!peakRequests.add(media)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val f = session.mediaFile(media) ?: return@launch
+            val info = engine.mediaInfo(f.absolutePath)
+            if (!info.ok || info.sampleRate <= 0) return@launch
+            val seconds = info.frames.toDouble() / info.sampleRate
+            val perSec = 50f
+            val bins = (seconds * perSec).toInt().coerceIn(64, 20000)
+            val data = engine.peaks(f.absolutePath, 0.0, seconds, bins) ?: return@launch
+            _peaks.value = _peaks.value + (media to PeakData(data, (bins / seconds).toFloat()))
         }
     }
 
-    fun undo() { undo.undo() }
-    fun redo() { undo.redo() }
-
-    fun save() {
-        viewModelScope.launch {
-            val p = _project.value.copy(
-                modified = System.currentTimeMillis(),
-                durationFrames = _clips.value.maxOfOrNull { it.startFrame + it.lengthFrames } ?: 0L,
-                bpm = _bpm.value
-            )
-            repo.update(p)
-            _project.value = p
-        }
+    init {
+        viewModelScope.launch { clips.collect { list -> list.forEach { ensurePeaks(it.media) } } }
     }
 
-    override fun onCleared() { save(); super.onCleared() }
-
-    companion object {
-        private val trackPalette = listOf(
-            0xFF4A90E2UL, 0xFFE27A4AUL, 0xFF9A4AE2UL, 0xFF4AE299UL,
-            0xFFE2D64AUL, 0xFFE24A88UL, 0xFF4AD7E2UL, 0xFFFF8A3DUL
-        )
-    }
+    companion object { const val RATE = TIMELINE_RATE.toFloat() }
 }

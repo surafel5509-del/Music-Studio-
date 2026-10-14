@@ -142,16 +142,25 @@ class ProjectStoreTest {
         val s = ProjectStore(tmp()); s.ensureDirs()
         File(s.recordingsDir, "take_1.wav").writeBytes(ByteArray(5000))
         s.beginTake("take_1.wav", trackId = 7, startFrame = 123456)
-        File(s.recordingsDir, "take_2.wav").writeBytes(ByteArray(5000))           // no sidecar: start unknown
+        File(s.recordingsDir, "deleted_by_user.wav").writeBytes(ByteArray(5000))     // no sidecar: committed earlier, then deleted
         File(s.recordingsDir, "committed.wav").writeBytes(ByteArray(5000))
+        s.beginTake("committed.wav", 1, 0)                                           // stale sidecar of a committed take
         var d = EditOps.addTrack(ProjectDoc()).first
         d = EditOps.addClip(d, d.tracks[0].id, "recordings/committed.wav", "c", 0, 10).first
         val orphans = s.orphanedTakes(d)
-        assertEquals(listOf("take_1.wav", "take_2.wav"), orphans.map { it.wav.name })
+        assertEquals(listOf("take_1.wav"), orphans.map { it.wav.name })
         assertEquals(7, orphans[0].trackId); assertEquals(123456L, orphans[0].startFrame)
-        assertEquals(0, orphans[1].trackId)
+        assertFalse(File(s.recordingsDir, "committed.wav.take.json").exists())       // stale marker cleaned up
+        assertTrue(File(s.recordingsDir, "deleted_by_user.wav").exists())            // never delete user audio
         s.finishTake("take_1.wav")
-        assertNull(s.orphanedTakes(d).first { it.wav.name == "take_1.wav" }.sidecar)
+        assertTrue(s.orphanedTakes(d).isEmpty())
+    }
+
+    @Test fun emptyTakeIsDroppedNotRecovered() {
+        val s = ProjectStore(tmp()); s.ensureDirs()
+        File(s.recordingsDir, "t.wav").writeBytes(ByteArray(44))
+        s.beginTake("t.wav", 1, 0)
+        assertTrue(s.orphanedTakes(ProjectDoc()).isEmpty())
     }
 }
 
@@ -279,6 +288,25 @@ class HistoryTest {
         for (i in 0 until 10) h.record("e$i", i, i + 1)
         var n = 0; while (h.undo() != null) n++
         assertEquals(3, n)
+    }
+
+    @Test fun faderDragCoalescesIntoOneStep() {
+        var now = 0L
+        val h = History<Int>(clock = { now })
+        h.record("vol", 0, 1, "vol:1"); now += 100
+        h.record("vol", 1, 2, "vol:1"); now += 100
+        h.record("vol", 2, 3, "vol:1")
+        assertEquals(0, h.undo()); assertNull(h.undo())          // one step back to the value before the drag
+        assertEquals(3, h.redo())
+    }
+
+    @Test fun coalescingDoesNotCrossKeysOrPauses() {
+        var now = 0L
+        val h = History<Int>(clock = { now })
+        h.record("a", 0, 1, "k1"); now += 10
+        h.record("b", 1, 2, "k2"); now += 5000
+        h.record("b", 2, 3, "k2")
+        assertEquals(2, h.undo()); assertEquals(1, h.undo()); assertEquals(0, h.undo())
     }
 
     @Test fun identicalDocumentIsNotRecorded() {
