@@ -102,18 +102,14 @@ jobs:
       - name: Prepare APK artifact
         run: |
           set +e
+          echo "=== Full app/build tree (top 200) ==="
+          find app/build -maxdepth 8 -type f 2>&1 | head -200
           echo "=== Searching for APKs ==="
           find app/build -name "*.apk" -type f || true
-          mkdir -p apk-out
-          APK=$(find app/build -name "*.apk" -type f | head -1)
-          if [ -z "$APK" ]; then
-            echo "No APK found! Listing outputs:"
-            find app/build/outputs -type f || true
-            ls -R app/build/outputs/apk 2>&1 || true
-            exit 1
-          fi
-          cp "$APK" apk-out/WaveStudio-debug.apk
-          ls -la apk-out/
+          echo "=== gradle tasks available (apk-related) ==="
+          ./gradlew tasks --all 2>&1 | grep -i apk | head -20
+          echo "=== output dirs ==="
+          find app/build -maxdepth 5 -type d 2>&1 | sort | head -80
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
