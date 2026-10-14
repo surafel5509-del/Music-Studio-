@@ -48,6 +48,8 @@ fun TimelineView(
 
     val colors = WaveStudioTheme.colors
     val trackPalette = listOf(colors.trackA, colors.trackB, colors.trackC, colors.trackD)
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
 
     val totalSeconds = totalFrames / sampleRate.coerceAtLeast(1f)
     val totalWidthPx = totalSeconds * zoom
@@ -72,7 +74,7 @@ fun TimelineView(
         val w = size.width
         val h = size.height
         // Background
-        drawRect(MaterialTheme.colorScheme.surface)
+        drawRect(surfaceColor)
 
         // Time ruler background
         drawRect(colors.grid, size = Size(w, 24.dp.toPx()))
