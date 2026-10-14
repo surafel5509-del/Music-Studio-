@@ -24,10 +24,11 @@ set(WS_ENGINE_SOURCES
         dsp/analysis/lufs.cpp
         dsp/file_io/wav_reader.cpp
         dsp/file_io/wav_stream_writer.cpp
+        dsp/file_io/flac_stream_writer.cpp
         dsp/resampler/resampler.cpp
 )
 
-# Not built into the app (stubs / not yet integrated): dsp/file_io/flac_io.cpp, dsp/file_io/mp3_io.cpp,
+# Not built into the app (stubs / not yet integrated): dsp/file_io/mp3_io.cpp,
 # dsp/midi/midi_processor.cpp, dsp/effects/pitch_shift.cpp, dsp/util/simd_utils.cpp.
 # See docs/ARCHITECTURE.md ("What is and is not implemented").
 

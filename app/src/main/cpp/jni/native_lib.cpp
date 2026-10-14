@@ -222,7 +222,7 @@ JNI(void, nativeGetSpectrum, jfloatArray out, jint bins) {
 }
 
 // ------------------------------------------------------------------ export
-JNI(jstring, nativeExport, jstring path, jint sampleRate, jint bitDepth, jint channels, jboolean dither, jfloat tailSec) {
+JNI(jstring, nativeExport, jstring path, jint format, jint sampleRate, jint bitDepth, jint channels, jboolean dither, jfloat tailSec) {
     bool expected = false;
     if (!g_export_running.compare_exchange_strong(expected, true)) return to_jstring(env, "{\"ok\":false,\"error\":5}");   // already running
     g_export_cancel = false; g_export_progress = 0.f;
@@ -230,7 +230,7 @@ JNI(jstring, nativeExport, jstring path, jint sampleRate, jint bitDepth, jint ch
     try {
         JStr p(env, path);
         ExportOptions o;
-        o.path = p.str(); o.sample_rate = sampleRate; o.bit_depth = bitDepth; o.channels = channels;
+        o.path = p.str(); o.format = format; o.sample_rate = sampleRate; o.bit_depth = bitDepth; o.channels = channels;
         o.dither = dither; o.tail_seconds = tailSec;
         ExportResult r = export_project(*C(), o, &g_export_progress, &g_export_cancel);
         j = std::string("{\"ok\":") + (r.ok ? "true" : "false") + ",\"cancelled\":" + (r.cancelled ? "true" : "false") +

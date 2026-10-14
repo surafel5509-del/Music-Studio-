@@ -157,6 +157,11 @@ fun EditorScreen(
         if (uri != null && o != null) vm.export(uri, doc.name, o)
         pendingExport = null
     }
+    val createExportFlac = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("audio/flac")) { uri ->
+        val o = pendingExport
+        if (uri != null && o != null) vm.export(uri, doc.name, o)
+        pendingExport = null
+    }
 
     val saveLabel = when {
         status.saveError != null -> "SAVE FAILED"
@@ -330,7 +335,8 @@ fun EditorScreen(
             onExport = { o ->
                 showExport = false
                 pendingExport = o
-                createExport.launch(doc.name.replace(Regex("[^A-Za-z0-9._-]+"), "_") + ".wav")
+                val base = doc.name.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+                if (o.flac) createExportFlac.launch("$base.flac") else createExport.launch("$base.wav")
             }
         )
     }
@@ -485,9 +491,10 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportOptions) -> Uni
     var channels by remember { mutableStateOf(2) }
     var dither by remember { mutableStateOf(true) }
     var tail by remember { mutableStateOf(true) }
+    var flac by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Export mix (WAV)") },
+        title = { Text(if (flac) "Export mix (FLAC)" else "Export mix (WAV)") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Renders the project offline through the same engine, tracks, effects and master as playback.", fontSize = 12.sp,
@@ -496,9 +503,14 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportOptions) -> Uni
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(44100, 48000, 96000).forEach { r -> FilterChip(selected = rate == r, onClick = { rate = r }, label = { Text("${r / 1000f} kHz") }) }
                 }
+                Text("Format", fontSize = 12.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    FilterChip(selected = !flac, onClick = { flac = false }, label = { Text("WAV") })
+                    FilterChip(selected = flac, onClick = { flac = true; if (bits == 32) bits = 24 }, label = { Text("FLAC (lossless)") })
+                }
                 Text("Bit depth", fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(16, 24, 32).forEach { b -> FilterChip(selected = bits == b, onClick = { bits = b }, label = { Text(if (b == 32) "32-bit float" else "$b-bit") }) }
+                    (if (flac) listOf(16, 24) else listOf(16, 24, 32)).forEach { b -> FilterChip(selected = bits == b, onClick = { bits = b }, label = { Text(if (b == 32) "32-bit float" else "$b-bit") }) }
                 }
                 Text("Channels", fontSize = 12.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -514,7 +526,7 @@ private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportOptions) -> Uni
                 Text("No loudness normalization is applied.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { TextButton(onClick = { onExport(ExportOptions(rate, bits, channels, dither && bits == 16, if (tail) 3f else 0f)) }) { Text("Choose file…") } },
+        confirmButton = { TextButton(onClick = { onExport(ExportOptions(rate, bits, channels, dither && bits == 16, if (tail) 3f else 0f, flac)) }) { Text("Choose file…") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

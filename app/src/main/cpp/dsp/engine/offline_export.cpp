@@ -1,5 +1,6 @@
 #include "offline_export.h"
 #include "../file_io/wav_stream_writer.h"
+#include "../file_io/flac_stream_writer.h"
 #include "../analysis/lufs.h"
 #include <algorithm>
 #include <cmath>
@@ -12,7 +13,8 @@ ExportResult export_project(EngineCore& live, const ExportOptions& opt,
                             std::atomic<float>* progress, const std::atomic<bool>* cancel) {
     ExportResult res;
     if (opt.sample_rate < 8000 || opt.sample_rate > 192000 || (opt.bit_depth != 16 && opt.bit_depth != 24 && opt.bit_depth != 32) ||
-        (opt.channels != 1 && opt.channels != 2) || opt.path.empty()) {
+        (opt.channels != 1 && opt.channels != 2) || opt.path.empty() ||
+        (opt.format != 0 && opt.format != 1) || (opt.format == 1 && opt.bit_depth == 32)) {
         res.error = 2; return res;
     }
     const int64_t end_tl = live.project_end();
@@ -25,8 +27,13 @@ ExportResult export_project(EngineCore& live, const ExportOptions& opt,
     const int64_t max_total = body + (int64_t)(std::max(0.f, opt.tail_seconds) * opt.sample_rate);
 
     const std::string tmp = opt.path + ".part";
-    WavStreamWriter w;
-    if (!w.open(tmp, opt.channels, opt.sample_rate, opt.bit_depth, opt.dither && opt.bit_depth == 16)) { res.error = 3; return res; }
+    // Both writers share the same small interface; only one is opened.
+    WavStreamWriter wav; FlacStreamWriter flac;
+    const bool use_flac = opt.format == 1;
+    const bool dither16 = opt.dither && opt.bit_depth == 16;
+    if (use_flac ? !flac.open(tmp, opt.channels, opt.sample_rate, opt.bit_depth, dither16)
+                 : !wav.open(tmp, opt.channels, opt.sample_rate, opt.bit_depth, dither16)) { res.error = 3; return res; }
+    auto w_write = [&](const float* d, int64_t n) { return use_flac ? flac.write(d, n) : wav.write(d, n); };
 
     LufsMeter lufs; lufs.set_sample_rate((float)opt.sample_rate);
     core->seek(0);
@@ -60,14 +67,15 @@ ExportResult export_project(EngineCore& live, const ExportOptions& opt,
             for (int i = 0; i < used; ++i) mono[i] = 0.5f * (st[2 * i] + st[2 * i + 1]);
             data = mono.data();
         }
-        if (used > 0 && !w.write(data, used)) { failed = true; break; }
+        if (used > 0 && !w_write(data, used)) { failed = true; break; }
         done += used;
         if (progress) progress->store(std::min(1.f, (float)((double)done / (double)std::max<int64_t>(1, body))));
         if (used < n) break;
     }
-    const bool closed = w.close();
+    const bool closed = use_flac ? flac.close() : wav.close();
+    const bool had_err = use_flac ? flac.had_error() : wav.had_error();
     if (res.cancelled) { std::remove(tmp.c_str()); return res; }
-    if (failed || !closed || w.had_error()) { std::remove(tmp.c_str()); res.error = 4; return res; }
+    if (failed || !closed || had_err) { std::remove(tmp.c_str()); res.error = 4; return res; }
     if (std::rename(tmp.c_str(), opt.path.c_str()) != 0) { std::remove(tmp.c_str()); res.error = 4; return res; }
     res.frames = done;
     res.lufs = lufs.integrated();

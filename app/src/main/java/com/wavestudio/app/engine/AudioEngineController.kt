@@ -78,7 +78,7 @@ data class ExportResult(val ok: Boolean, val cancelled: Boolean, val error: Int,
     companion object {
         fun parse(json: String): ExportResult = try {
             val m = Json.parseObject(json)
-            ExportResult(m.bool("ok"), m.bool("cancelled"), m.int("error"), m.long("frames"), m.float("peakDb"), m.float("lufs"), m.bool("clipped"))
+            ExportResult(m.bool("ok"), m.bool("cancelled"), m.int("error"), m.long("frames"), m.float("peakDb"), m.float("lufs"), m.long("clipped") > 0L)
         } catch (_: JsonException) { ExportResult(false, false, 6, 0, 0f, 0f, false) }
     }
 }

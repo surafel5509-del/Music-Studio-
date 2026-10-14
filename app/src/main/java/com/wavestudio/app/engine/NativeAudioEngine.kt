@@ -66,7 +66,7 @@ class NativeAudioEngine {
     external fun nativeGetSpectrum(out: FloatArray, bins: Int)
 
     // ---- export
-    external fun nativeExport(path: String, sampleRate: Int, bitDepth: Int, channels: Int, dither: Boolean, tailSec: Float): String
+    external fun nativeExport(path: String, format: Int, sampleRate: Int, bitDepth: Int, channels: Int, dither: Boolean, tailSec: Float): String
     external fun nativeExportProgress(): Float
     external fun nativeCancelExport()
 

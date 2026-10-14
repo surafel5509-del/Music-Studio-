@@ -15,7 +15,7 @@ OUT="${TMPDIR:-/tmp}/wavestudio_native_tests"
 mkdir -p "$OUT"
 cd "$CPP"
 
-COMMON_SRC="dsp/buffer.cpp dsp/file_io/wav_reader.cpp dsp/file_io/wav_stream_writer.cpp dsp/resampler/resampler.cpp \
+COMMON_SRC="dsp/buffer.cpp dsp/file_io/wav_reader.cpp dsp/file_io/wav_stream_writer.cpp dsp/file_io/flac_stream_writer.cpp dsp/resampler/resampler.cpp \
 dsp/analysis/lufs.cpp dsp/analysis/spectrum.cpp dsp/effects/effect_factory.cpp dsp/effects/eq.cpp dsp/effects/compressor.cpp \
 dsp/effects/reverb.cpp dsp/effects/distortion.cpp dsp/effects/utility.cpp \
 dsp/engine/engine_core.cpp dsp/engine/media.cpp dsp/engine/recorder.cpp dsp/engine/offline_export.cpp"
@@ -37,6 +37,16 @@ build_and_run test_engine "$SAN"
 build_and_run test_export "$SAN"
 build_and_run test_engine_stress "$SAN" ITER=$ITER
 if [[ -n "$TSAN" ]]; then build_and_run test_engine_stress "$TSAN" ITER=$((ITER/2)); fi
+
+# FLAC: decode our output with libFLAC (through python soundfile) and compare with the WAV export.
+echo "=== flac verification"
+if python3 -c "import soundfile, numpy" 2>/dev/null; then
+  $CXX $FLAGS $SAN tests/flac_tool.cpp dsp/file_io/flac_stream_writer.cpp -o "$OUT/flac_tool"
+  mkdir -p "$OUT/flac"
+  if ! python3 "$ROOT/scripts/verify_flac.py" "$OUT/flac_tool" "$OUT/flac" /tmp; then fail=1; echo "!!! FLAC verification FAILED"; fi
+else
+  echo "(skipped: pip install soundfile numpy to enable the libFLAC decode check)"
+fi
 
 if [[ $fail -ne 0 ]]; then echo "NATIVE TESTS FAILED"; exit 1; fi
 echo "ALL NATIVE TESTS PASSED"

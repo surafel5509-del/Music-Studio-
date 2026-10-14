@@ -49,7 +49,7 @@ data class SessionStatus(
 
 enum class RecordStart { OK, NO_INPUT, NO_TRACK, ALREADY_RECORDING, FAILED }
 
-data class ExportOptions(val sampleRate: Int = 48000, val bitDepth: Int = 24, val channels: Int = 2, val dither: Boolean = true, val tailSeconds: Float = 0f)
+data class ExportOptions(val sampleRate: Int = 48000, val bitDepth: Int = 24, val channels: Int = 2, val dither: Boolean = true, val tailSeconds: Float = 0f, val flac: Boolean = false)
 
 sealed class ExportState {
     object Idle : ExportState()
@@ -376,10 +376,10 @@ class ProjectSession @Inject constructor(
         val d = _doc.value
         _export.value = ExportState.Running(displayName)
         exportJob = scope.launch(Dispatchers.IO) {
-            val tmp = File(ctx.cacheDir, "export_${System.currentTimeMillis()}.wav")
+            val tmp = File(ctx.cacheDir, "export_${System.currentTimeMillis()}." + if (options.flac) "flac" else "wav")
             try {
                 val res = ExportResult.parse(
-                    controller.native.nativeExport(tmp.absolutePath, options.sampleRate, options.bitDepth, options.channels, options.dither, options.tailSeconds)
+                    controller.native.nativeExport(tmp.absolutePath, if (options.flac) 1 else 0, options.sampleRate, options.bitDepth, options.channels, options.dither, options.tailSeconds)
                 )
                 if (res.ok) {
                     ctx.contentResolver.openOutputStream(destination, "wt")?.use { out -> tmp.inputStream().use { it.copyTo(out) } }

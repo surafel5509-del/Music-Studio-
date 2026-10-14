@@ -23,6 +23,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install FLAC decode check dependencies
+        run: pip install soundfile numpy
+
       - name: Run native engine tests (ASan + UBSan + TSan)
         run: scripts/run_native_tests.sh
 

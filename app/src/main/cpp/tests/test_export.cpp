@@ -1,5 +1,6 @@
 #include "test_util.h"
 #include <vector>
+#include <cstring>
 #include <atomic>
 #include <thread>
 #include "engine/engine_core.h"
@@ -79,8 +80,46 @@ static void test_export_errors_and_cancel() {
     CHECK(std::fopen("/tmp/ws_exp_cancel.wav.part", "rb") == nullptr);
 }
 
+// FLAC export: structure checks here; sample-exact comparison against the WAV export and a libFLAC decode
+// happen in scripts/verify_flac.py (which reads the /tmp/ws_cmp_* files this test leaves behind).
+static void test_export_flac() {
+    auto a = sine(48000 * 3, 2, 48000, 997, 0.3);
+    for (size_t i = 0; i < a.size(); i += 2) a[i + 1] *= 0.5f;             // different channel levels so M/S is not trivially best
+    std::string p = mk("flacsrc", a, 2, 48000);
+    EngineCore core(std::make_shared<MediaLibrary>(), 48000);
+    core.add_track(1);
+    ClipParams c; c.id = 1; c.track_id = 1; c.path = p; c.start = 4800; c.length = 48000 * 3;
+    CHECK(core.set_clip(c) == 0);
+    for (int bits : {16, 24}) for (int ch : {1, 2}) {
+        const std::string base = "/tmp/ws_cmp_" + std::to_string(bits) + "_" + std::to_string(ch);
+        ExportOptions o; o.path = base + ".flac"; o.format = 1; o.sample_rate = 44100; o.bit_depth = bits; o.channels = ch; o.dither = false; o.tail_seconds = 0.f;
+        ExportResult rf = export_project(core, o);
+        CHECK_MSG(rf.ok, "flac %d/%d err %d", bits, ch, rf.error);
+        o.path = base + ".wav"; o.format = 0;
+        ExportResult rw = export_project(core, o);
+        CHECK(rw.ok && rw.frames == rf.frames);
+        CHECK_NEAR(rf.lufs, rw.lufs, 0.01);
+        FILE* f = std::fopen((base + ".flac").c_str(), "rb");
+        CHECK(f != nullptr);
+        if (f) {
+            unsigned char h[42]; CHECK(std::fread(h, 1, 42, f) == 42); std::fclose(f);
+            CHECK(std::memcmp(h, "fLaC", 4) == 0 && h[4] == 0x80 && h[7] == 34);
+            const uint64_t packed = ((uint64_t)h[18] << 56) | ((uint64_t)h[19] << 48) | ((uint64_t)h[20] << 40) | ((uint64_t)h[21] << 32) | ((uint64_t)h[22] << 24) | ((uint64_t)h[23] << 16) | ((uint64_t)h[24] << 8) | h[25];
+            CHECK((int64_t)(packed & 0xFFFFFFFFFull) == rf.frames);
+            CHECK((int)((packed >> 44) & 0xFFFFF) == 44100);
+            CHECK((int)((packed >> 41) & 7) + 1 == ch);
+            CHECK((int)((packed >> 36) & 31) + 1 == bits);
+        }
+    }
+    ExportOptions bad; bad.path = "/tmp/ws_exp_bad.flac"; bad.format = 1; bad.bit_depth = 32;
+    CHECK(export_project(core, bad).error == 2);                              // FLAC has no 32-bit float
+    CHECK(std::fopen("/tmp/ws_exp_bad.flac", "rb") == nullptr);
+    bad.format = 7; bad.bit_depth = 24; CHECK(export_project(core, bad).error == 2);
+}
+
 int main() {
     RUN(test_export_formats);
     RUN(test_export_errors_and_cancel);
+    RUN(test_export_flac);
     TEST_MAIN_END();
 }

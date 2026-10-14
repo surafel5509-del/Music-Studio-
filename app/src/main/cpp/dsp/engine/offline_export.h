@@ -9,7 +9,8 @@ namespace wavestudio {
 struct ExportOptions {
     std::string path;
     int sample_rate = 48000;      // 8000..192000; the whole project is rendered natively at this rate
-    int bit_depth = 24;           // 16, 24 or 32 (IEEE float)
+    int format = 0;               // 0 = WAV, 1 = FLAC (lossless; 16 or 24-bit only)
+    int bit_depth = 24;           // 16, 24 or 32 (IEEE float, WAV only)
     int channels = 2;             // 1 (mono down-mix) or 2
     bool dither = true;           // TPDF dither when writing 16-bit
     float tail_seconds = 3.f;     // maximum render past the last clip (reverb / delay tails)
