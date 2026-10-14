@@ -8,7 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.wavestudio.app.domain.Track
-import com.wavestudio.app.ui.editor.MixerPanel
+import com.wavestudio.app.ui.mixer.MixerPanel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

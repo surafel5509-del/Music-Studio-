@@ -11,7 +11,7 @@ import com.wavestudio.app.data.db.entity.ProjectEntity
 @Database(
     entities = [ProjectEntity::class],
     version = 1,
-    exportSchema = true
+    exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
