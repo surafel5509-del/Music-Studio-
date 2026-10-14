@@ -11,8 +11,10 @@
 #include "effects/effect_chain.h"
 #include "analysis/spectrum.h"
 #include "analysis/lufs.h"
+#include <aaudio/AAudio.h>
+#include <SLES/OpenSLES.h>
 
-struct AAudioStreamStruct;
+// AAudioStream and aaudio_data_callback_result_t are defined in <aaudio/AAudio.h>
 typedef struct AAudioStreamStruct AAudioStream;
 
 namespace wavestudio {

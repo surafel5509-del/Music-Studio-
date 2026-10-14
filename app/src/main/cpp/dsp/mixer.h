@@ -6,6 +6,7 @@
 namespace wavestudio {
 
 class EffectChain;
+struct Clip;
 
 struct MixerTrack {
     float gain_l = 1.f, gain_r = 1.f;
