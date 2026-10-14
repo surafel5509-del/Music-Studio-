@@ -2,7 +2,7 @@ package com.wavestudio.app
 
 import com.wavestudio.app.domain.dbToLinear
 import com.wavestudio.app.domain.linearToDb
-import org.junit.Assert
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AudioMathTest {
@@ -21,7 +21,8 @@ class AudioMathTest {
     }
 
     @Test
-    fun negativeInfinity() {
-        assertEquals(Float.NEGATIVE_INFINITY, linearToDb(0f))
+    fun silenceIsFlooredNotInfinite() {
+        // linearToDb clamps at 1e-10 (-200 dB) so meters never receive -Infinity
+        assertEquals(-200f, linearToDb(0f), 0.01f)
     }
 }
