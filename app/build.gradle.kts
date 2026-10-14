@@ -146,7 +146,6 @@ dependencies {
 
     // Window / Large Screen / Foldables
     implementation("androidx.window:window:1.2.0")
-    implementation("androidx.compose.material3:material3-adaptive:1.0.0-alpha06")
 
     // Hilt DI
     implementation("com.google.dagger:hilt-android:2.50")

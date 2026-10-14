@@ -181,11 +181,7 @@ void ChorusFlangerPhaser::process(float** buffers, int nf, int nc) {
                 float dly = base + (lfo*0.5f+0.5f)*depth*depthS;
                 d_[c].write(in);
                 float del = d_[c].read(dly);
-                // feedback only for flanger
-                static float fbhold[2]={0,0};
-                float out = del + fbhold[c]*fb;
-                fbhold[c] = out;
-                x[i] = in*(1.f-mix) + out*mix;
+                x[i] = in*(1.f-mix) + del*mix;
             }
         }
     }

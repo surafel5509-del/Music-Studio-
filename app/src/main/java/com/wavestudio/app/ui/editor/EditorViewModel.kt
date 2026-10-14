@@ -105,10 +105,11 @@ class EditorViewModel @Inject constructor(
     }
     fun seek(f: Long) { engine.seek(f) }
 
-    fun addTrack(name: String = "Track") {
+    fun addTrack(name: String = "Track"): Int {
         val id = engine.addTrack(name)
         val t = Track(id = id, name = name, color = trackPalette[(_tracks.value.size % trackPalette.size)])
         _tracks.value = _tracks.value + t
+        return id
     }
 
     fun removeTrack(id: Int) {
@@ -175,7 +176,7 @@ class EditorViewModel @Inject constructor(
                     dst.outputStream().use { o -> i.copyTo(o) }
                 }
             }
-            val trackId = _tracks.value.firstOrNull()?.id ?: addTrack("Audio 1").let { 1 /* engine returns first track id */ }
+            val trackId = _tracks.value.firstOrNull()?.id ?: run { addTrack("Audio 1") }
             val startFrame = engine.playheadFrames.value
             val clip = AudioClip(
                 id = _clips.value.size + 1,

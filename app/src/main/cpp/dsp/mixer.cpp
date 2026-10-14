@@ -25,14 +25,17 @@ void Mixer::mix(float* output, int numFrames, int numChannels, float sampleRate,
     std::memset(output, 0, sizeof(float) * numFrames * numChannels);
 
     bool any_solo = false;
-    for (auto& t : tracks) if (t.solo) { any_solo = true; break; }
+    for (size_t ti = 0; ti < tracks.size(); ++ti) {
+        if (tracks[ti].solo) { any_solo = true; break; }
+    }
 
     float peak = 0.f;
     float sum_sq = 0.f;
 
     std::vector<float> tmp(numFrames * numChannels, 0.f);
 
-    for (auto& tr : tracks) {
+    for (size_t ti = 0; ti < tracks.size(); ++ti) {
+        const MixerTrack& tr = tracks[ti];
         if (tr.mute) continue;
         if (any_solo && !tr.solo) continue;
 
@@ -41,7 +44,7 @@ void Mixer::mix(float* output, int numFrames, int numChannels, float sampleRate,
 
         // Mix all clips that overlap playhead
         if (tr.clip && tr.clip->buffer) {
-            const auto& c = *tr.clip;
+            const Clip& c = *tr.clip;
             int64_t abs_end = c.start_frame + c.length_frames;
             if (playhead + numFrames > c.start_frame && playhead < abs_end) {
                 int64_t start_offset = std::max<int64_t>(0, c.start_frame - playhead);
@@ -67,11 +70,6 @@ void Mixer::mix(float* output, int numFrames, int numChannels, float sampleRate,
                     }
                 }
             }
-        }
-
-        // Recording monitor: play back what's being recorded (low-latency monitoring)
-        if (tr.recording) {
-            // pass-through handled before effects via input callback
         }
 
         // Apply track effects
@@ -103,10 +101,7 @@ void Mixer::mix(float* output, int numFrames, int numChannels, float sampleRate,
     for (int i = 0; i < numFrames * numChannels; ++i) {
         output[i] = std::max(-1.f, std::min(1.f, output[i]));
     }
-
-    // Thread-local peak smoothing handled by caller via atomics.
-    // We write back through global atomics from the callback (declared as static externs)
-    // Inlined here as best-effort.
+    (void)peak; (void)sum_sq; // metering is reported by caller via engine atomics
 }
 
 } // namespace wavestudio
