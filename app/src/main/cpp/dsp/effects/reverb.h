@@ -8,7 +8,8 @@ namespace wavestudio {
 class Reverb : public Effect {
 public:
     Reverb();
-    const char* name() const override { return "Reverb (Schroeder)"; }
+    const char* name() const override { return "Reverb"; }
+    const char* type_id() const override { return "reverb"; }
     void set_sample_rate(float sr) override;
     void reset() override;
     void process(float** buffers, int nf, int nc) override;
@@ -41,29 +42,24 @@ private:
         }
     };
     std::array<Comb,8> comb_;
-    std::array<Allpass,4> ap_;
+    std::array<std::array<Allpass,4>,2> ap_;   // independent allpass state per channel
 };
 
 class Delay : public Effect {
 public:
     Delay();
     const char* name() const override { return "Stereo Delay"; }
-    void set_sample_rate(float sr) override;
+    const char* type_id() const override { return "delay"; }
+    void set_sample_rate(float sr) override;   // allocates (control thread only)
     void reset() override;
-    void process(float** buffers, int nf, int nc) override;
+    void process(float** buffers, int nf, int nc) override;   // allocation-free
 private:
     struct DL {
-        std::vector<float> buf;
+        std::vector<float> buf;   // sized for the maximum delay once, in set_sample_rate()
         int idx = 0;
-        void ensure(int s) { if ((int)buf.size() < s) buf.assign(s,0.f); idx%=std::max(1,(int)buf.size()); }
-        float tick(float in, float fb) {
-            float out = buf[idx];
-            buf[idx] = in + out*fb;
-            idx=(idx+1)%(int)buf.size();
-            return out;
-        }
     };
     std::array<DL,2> l_;
+    float lp_[2] = {0.f, 0.f};     // feedback low-pass state keeps repeats from building up HF
 };
 
 } // namespace wavestudio

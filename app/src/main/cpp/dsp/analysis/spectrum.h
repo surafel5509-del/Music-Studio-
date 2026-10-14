@@ -3,10 +3,11 @@
 #include <cstdint>
 #include <complex>
 #include <atomic>
-#include <mutex>
 
 namespace wavestudio {
 
+// Single-threaded (control thread): audio is handed over through a lock-free ring, never pushed from
+// the audio callback.
 class SpectrumAnalyzer {
 public:
     SpectrumAnalyzer();
@@ -25,7 +26,7 @@ private:
     std::vector<float> buffer_;
     int buf_ptr_ = 0;
     std::vector<float> mags_;
-    mutable std::mutex m_;
+    std::vector<std::complex<float>> scratch_;
 };
 
 } // namespace wavestudio

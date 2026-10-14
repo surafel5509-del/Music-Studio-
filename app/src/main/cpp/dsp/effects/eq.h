@@ -9,6 +9,8 @@ class ParametricEQ : public Effect {
 public:
     ParametricEQ();
     const char* name() const override { return "Parametric EQ"; }
+    const char* type_id() const override { return "eq"; }
+    void set_param(int i, float v) override;   // keeps band coefficients in sync with the parameters
     void set_sample_rate(float sr) override;
     void reset() override;
     void process(float** buffers, int numFrames, int numChannels) override;
@@ -29,9 +31,10 @@ private:
     void recompute_coeffs();
 
     struct Biquad {
-        float b0=1,b1=0,b2=0,a1=0,a2=0;
-        float x1=0,x2=0,y1=0,y2=0;
-        void reset(){x1=x2=y1=y2=0;}
+        // double precision: float DF1 at low f0 / high Q is numerically unstable
+        double b0=1,b1=0,b2=0,a1=0,a2=0;
+        double z1=0,z2=0;   // transposed direct form II: better behaved when coefficients change
+        void reset(){z1=z2=0;}
         float tick(float in);
     };
 
@@ -39,17 +42,6 @@ private:
     // biquads per band per channel (stereo: 2 * 8 = 16)
     std::array<std::array<Biquad,8>,4> bqs_{}; // up to 4 channels
     int channels_ = 2;
-};
-
-class GraphicEQ : public Effect {
-public:
-    GraphicEQ();
-    const char* name() const override { return "Graphic EQ"; }
-    void set_sample_rate(float sr) override;
-    void reset() override;
-    void process(float** buffers, int numFrames, int numChannels) override;
-private:
-    ParametricEQ inner_;
 };
 
 } // namespace wavestudio

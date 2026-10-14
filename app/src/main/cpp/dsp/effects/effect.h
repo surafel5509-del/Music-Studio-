@@ -25,9 +25,17 @@ public:
     virtual int param_count() const { return (int)params_.size(); }
     virtual Param& param(int i) { return params_[i]; }
     virtual const Param& param(int i) const { return params_[i]; }
+    // Values are clamped to the declared range so automation / UI can never push an
+    // effect into an unstable region (e.g. feedback > 1).
     virtual void set_param(int i, float v) {
-        if (i >= 0 && i < (int)params_.size()) params_[i].value = v;
+        if (i < 0 || i >= (int)params_.size()) return;
+        Param& p = params_[i];
+        if (!(v == v)) return;
+        p.value = v < p.min ? p.min : (v > p.max ? p.max : v);
     }
+    float value(int i) const { return params_[i].value; }
+    // Stable identifier used in project files and presets.
+    virtual const char* type_id() const { return "unknown"; }
 
 protected:
     float sample_rate_ = 48000.f;

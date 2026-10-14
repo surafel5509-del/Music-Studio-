@@ -105,10 +105,17 @@ public:
     const std::vector<float>& data() const { return interleaved_; }
     std::vector<float>& data_mut() { return interleaved_; }
 
-    // Mip-map data for fast waveform rendering at zoom levels
-    void build_mipmaps();
-    // Min/max pairs at a given reduction level; level 0 = raw samples
-    void get_mipmap(int level, const float*& mins, const float*& maxs, int64_t& frames) const;
+    // Shrink (never grow) the buffer to `frames` frames.
+    void resize_frames(int64_t frames);
+
+    // Coarse min/max table (one entry per kPeakBlock frames) so zoomed-out waveforms
+    // never have to scan the whole file. Memory cost is ~1.6% of the audio data.
+    static constexpr int kPeakBlock = 256;
+    void build_peak_table();
+
+    // Waveform peaks: `bins` min/max pairs (out[2*i], out[2*i+1]) covering frames
+    // [start, end) mixed across channels. Frames outside the buffer read as silence.
+    void get_peaks(int64_t start, int64_t end, int bins, float* out) const;
 
     // Compute peak for normalization
     float peak_db() const;
@@ -118,8 +125,8 @@ private:
     int64_t frames_ = 0;
     float sample_rate_ = 44100.f;
     std::vector<float> interleaved_; // interleaved L R L R ...
-    std::vector<std::vector<float>> mipmap_mins_;
-    std::vector<std::vector<float>> mipmap_maxs_;
+    std::vector<float> peak_min_;  // per kPeakBlock frames, min over all channels
+    std::vector<float> peak_max_;
 };
 
 } // namespace wavestudio

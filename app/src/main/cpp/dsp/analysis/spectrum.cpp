@@ -1,7 +1,6 @@
 #include "spectrum.h"
 #include <cmath>
 #include <cstring>
-#include <mutex>
 #include <algorithm>
 
 namespace wavestudio {
@@ -9,7 +8,6 @@ namespace wavestudio {
 SpectrumAnalyzer::SpectrumAnalyzer() { init(2048, 48000.f); }
 
 void SpectrumAnalyzer::init(int fftSize, float sampleRate) {
-    std::lock_guard<std::mutex> lk(m_);
     n_ = fftSize;
     sample_rate_ = sampleRate;
     window_.resize(n_);
@@ -23,7 +21,6 @@ void SpectrumAnalyzer::init(int fftSize, float sampleRate) {
 }
 
 void SpectrumAnalyzer::push(const float* frames, int n, int channels) {
-    std::lock_guard<std::mutex> lk(m_);
     for (int i = 0; i < n; ++i) {
         // mix to mono
         float m = frames[i*channels];
@@ -38,10 +35,10 @@ void SpectrumAnalyzer::push(const float* frames, int n, int channels) {
 }
 
 void SpectrumAnalyzer::process_window() {
-    std::vector<std::complex<float>> f(n_);
+    auto& f = scratch_; f.assign(n_, std::complex<float>(0.f, 0.f));
     for (int i=0;i<n_;++i) f[i] = buffer_[i] * window_[i];
     fft(f, false);
-    float norm = 2.f / n_;
+    float norm = 4.f / n_;   // Hann coherent gain 0.5: a full-scale sine reads 1.0 (0 dBFS)
     for (int i=0;i<n_/2;++i){
         float m = std::abs(f[i]) * norm;
         // smooth
@@ -50,7 +47,7 @@ void SpectrumAnalyzer::process_window() {
 }
 
 void SpectrumAnalyzer::get_magnitudes(float* outBins, int bins) const {
-    std::lock_guard<std::mutex> lk(m_);
+    if (bins < 2) return;
     if (mags_.empty()) { std::memset(outBins, 0, sizeof(float)*bins); return; }
     // Map linear FFT bins to requested bins (log scale)
     for (int i=0;i<bins;++i) {

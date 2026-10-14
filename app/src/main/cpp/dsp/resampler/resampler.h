@@ -1,17 +1,19 @@
 #pragma once
-#include <vector>
 #include <cstdint>
+#include <memory>
+#include <vector>
+#include "../buffer.h"
+
 namespace wavestudio {
-// Linear / polyphase resampler for arbitrary ratio. Sinc-windowed for good quality.
-class Resampler {
-public:
-    void set_ratio(double ratio);
-    int process(const float* in, int inFrames, float* out, int outFramesMax, int channels);
-    void reset();
-private:
-    double ratio_ = 1.0;
-    double phase_ = 0.0;
-    std::vector<float> history_;
-    int history_pos_ = 0;
-};
-}
+
+// Offline band-limited (windowed-sinc, Blackman-Harris) sample-rate conversion of a whole
+// buffer. When down-sampling the kernel cutoff is lowered to avoid aliasing. Quality is
+// ~96 dB stop-band with 24 zero crossings; it is intended for import/export time, not the
+// audio callback. Returns the same shared buffer when no conversion is needed.
+std::shared_ptr<AudioBuffer> resample_buffer(const std::shared_ptr<AudioBuffer>& src, float target_rate);
+
+// Interleaved float helper used for export: converts `frames` frames of `channels` channels.
+std::vector<float> resample_interleaved(const float* in, int64_t frames, int channels,
+                                        float in_rate, float out_rate);
+
+} // namespace wavestudio

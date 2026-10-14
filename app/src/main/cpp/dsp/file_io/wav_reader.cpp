@@ -1,154 +1,214 @@
 #include "wav_reader.h"
-#include <fstream>
-#include <cstring>
+#include "wav_stream_writer.h"
+#include "../engine/rt_utils.h"
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 
 namespace wavestudio {
 
-static inline int16_t read_i16(std::ifstream& f) { int16_t v; f.read((char*)&v,2); return v; }
-static inline int32_t read_i32(std::ifstream& f) { int32_t v; f.read((char*)&v,4); return v; }
-static inline uint16_t read_u16(std::ifstream& f) { uint16_t v; f.read((char*)&v,2); return v; }
-static inline uint32_t read_u32(std::ifstream& f) { uint32_t v; f.read((char*)&v,4); return v; }
+namespace {
 
-std::shared_ptr<AudioBuffer> WavReader::load(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f.is_open()) return nullptr;
-    char riff[4], wave[4];
-    f.read(riff,4);
-    if (std::strncmp(riff,"RIFF",4)!=0) return nullptr;
-    /*uint32_t sz = */read_u32(f);
-    f.read(wave,4);
-    if (std::strncmp(wave,"WAVE",4)!=0) return nullptr;
+struct File {
+    FILE* f = nullptr;
+    explicit File(const std::string& p, const char* mode) { f = std::fopen(p.c_str(), mode); }
+    ~File() { if (f) std::fclose(f); }
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+};
 
-    int channels=0; int sampleRate=0; int bitDepth=16;
-    int audioFormat=1;
-    std::vector<char> data;
+uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
+uint32_t rd32(const uint8_t* p) { return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24); }
 
-    while (f.good() && !f.eof()) {
-        char cid[4]; uint32_t csz=0;
-        f.read(cid,4);
-        if (!f.good()) break;
-        csz = read_u32(f);
-        if (std::strncmp(cid,"fmt ",3)==0) {
-            audioFormat = read_u16(f);
-            channels = read_u16(f);
-            sampleRate = (int)read_u32(f);
-            /*byteRate*/ read_u32(f);
-            /*blockAlign*/ read_u16(f);
-            bitDepth = read_u16(f);
-            if (csz > 16) f.seekg(csz-16, std::ios::cur);
-            else f.seekg(csz - 16 + (csz%2), std::ios::cur);
-        } else if (std::strncmp(cid,"data",4)==0) {
-            data.resize(csz);
-            f.read(data.data(), csz);
-            if (csz % 2) f.seekg(1, std::ios::cur);
-        } else {
-            f.seekg(csz + (csz%2), std::ios::cur);
-        }
-    }
-    if (data.empty() || channels <= 0 || sampleRate <= 0) return nullptr;
-    int bytesPerSample = bitDepth/8;
-    int64_t frames = (int64_t)data.size() / (bytesPerSample*channels);
-    auto buf = std::make_shared<AudioBuffer>();
-    buf->allocate(channels, frames, (float)sampleRate);
-    float* out = buf->data_mut().data();
-    for (int64_t i = 0; i < frames; ++i) {
-        for (int c=0;c<channels;++c) {
-            size_t off = i*channels*bytesPerSample + c*bytesPerSample;
-            float v = 0.f;
-            switch(bitDepth){
-                case 16: {
-                    int16_t s; std::memcpy(&s, data.data()+off,2); v = (float)s / 32768.f; break;
-                }
-                case 24: {
-                    int32_t s = ((uint8_t)data[off+2] << 24) | ((uint8_t)data[off+1]<<16) | ((uint8_t)data[off]<<8);
-                    v = (float)(s>>8) / 8388608.f;
-                    break;
-                }
-                case 32: {
-                    if (audioFormat == 3) { // float
-                        std::memcpy(&v, data.data()+off, 4);
-                    } else {
-                        int32_t s; std::memcpy(&s, data.data()+off,4); v = (float)s / 2147483648.f;
-                    }
-                    break;
-                }
+struct Parsed {
+    WavInfo info;
+    int64_t data_pos = 0;
+    int64_t data_bytes = 0;   // bytes actually available
+    bool truncated = false;
+};
+
+int64_t file_size(FILE* f) {
+    long cur = std::ftell(f);
+    std::fseek(f, 0, SEEK_END);
+    long end = std::ftell(f);
+    std::fseek(f, cur, SEEK_SET);
+    return end < 0 ? 0 : end;
+}
+
+WavError parse(FILE* f, Parsed& out) {
+    int64_t fsz = file_size(f);
+    uint8_t hdr[12];
+    if (std::fread(hdr, 1, 12, f) != 12) return WavError::NotRiffWave;
+    if (std::memcmp(hdr, "RIFF", 4) != 0 || std::memcmp(hdr + 8, "WAVE", 4) != 0) return WavError::NotRiffWave;
+
+    bool have_fmt = false, have_data = false;
+    int fmt_tag = 0;
+    int64_t pos = 12;
+    while (pos + 8 <= fsz) {
+        uint8_t ch[8];
+        std::fseek(f, (long)pos, SEEK_SET);
+        if (std::fread(ch, 1, 8, f) != 8) break;
+        uint32_t csz = rd32(ch + 4);
+        int64_t body = pos + 8;
+        if (std::memcmp(ch, "fmt ", 4) == 0) {
+            if (csz < 16 || body + 16 > fsz) return WavError::MissingFmt;
+            uint8_t fm[40] = {0};
+            size_t want = std::min<uint32_t>(csz, sizeof(fm));
+            if (std::fread(fm, 1, want, f) != want) return WavError::MissingFmt;
+            fmt_tag = rd16(fm);
+            out.info.channels = rd16(fm + 2);
+            out.info.sample_rate = (float)rd32(fm + 4);
+            out.info.bit_depth = rd16(fm + 14);
+            if (fmt_tag == 0xFFFE && csz >= 40) fmt_tag = rd16(fm + 24); // WAVE_FORMAT_EXTENSIBLE sub-format
+            out.info.is_float = (fmt_tag == 3);
+            have_fmt = true;
+        } else if (std::memcmp(ch, "data", 4) == 0) {
+            out.data_pos = body;
+            int64_t avail = fsz - body;
+            int64_t claimed = csz;
+            // 0 or 0xFFFFFFFF: streaming writer that never finalised the header
+            if (csz == 0 || csz == 0xFFFFFFFFu || claimed > avail) {
+                out.data_bytes = avail;
+                out.truncated = (csz != 0 && csz != 0xFFFFFFFFu) || csz == 0xFFFFFFFFu || csz == 0;
+                if (csz == 0 && avail == 0) out.truncated = false;
+            } else {
+                out.data_bytes = claimed;
             }
-            out[i*channels + c] = std::max(-1.f, std::min(1.f, v));
+            have_data = true;
+            break; // fmt precedes data in every writer we care about
         }
+        pos = body + (int64_t)csz + (csz & 1);
     }
-    buf->build_mipmaps();
-    return buf;
+    if (!have_fmt) return WavError::MissingFmt;
+    if (!have_data) return WavError::MissingData;
+
+    int bd = out.info.bit_depth;
+    bool ok = out.info.channels >= 1 && out.info.channels <= 32 && out.info.sample_rate >= 1000.f;
+    if (fmt_tag == 1) ok = ok && (bd == 8 || bd == 16 || bd == 24 || bd == 32);
+    else if (fmt_tag == 3) ok = ok && (bd == 32 || bd == 64);
+    else ok = false;
+    if (!ok) return WavError::UnsupportedFormat;
+
+    int bps = bd / 8;
+    out.info.frames = out.data_bytes / (int64_t)(bps * out.info.channels);
+    return WavError::Ok;
+}
+
+inline float decode(const uint8_t* p, int bd, bool is_float) {
+    switch (bd) {
+        case 8: return ((int)p[0] - 128) / 128.f;
+        case 16: { int16_t s = (int16_t)rd16(p); return s / 32768.f; }
+        case 24: {
+            int32_t s = (int32_t)((uint32_t)p[0] << 8 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 24);
+            return (float)(s >> 8) / 8388608.f;
+        }
+        case 32: {
+            if (is_float) { float v; std::memcpy(&v, p, 4); return v; }
+            int32_t s = (int32_t)rd32(p);
+            return (float)((double)s / 2147483648.0);
+        }
+        case 64: { double v; std::memcpy(&v, p, 8); return (float)v; }
+    }
+    return 0.f;
+}
+
+} // namespace
+
+const char* WavReader::error_text(WavError e) {
+    switch (e) {
+        case WavError::Ok: return "ok";
+        case WavError::OpenFailed: return "cannot open file";
+        case WavError::NotRiffWave: return "not a RIFF/WAVE file";
+        case WavError::MissingFmt: return "missing or invalid fmt chunk";
+        case WavError::MissingData: return "missing data chunk";
+        case WavError::UnsupportedFormat: return "unsupported WAV encoding";
+        case WavError::Truncated: return "file truncated (partial audio recovered)";
+        case WavError::TooLarge: return "file too large for available memory";
+    }
+    return "unknown";
+}
+
+WavError WavReader::read_info(const std::string& path, WavInfo& info) {
+    File f(path, "rb");
+    if (!f.f) return WavError::OpenFailed;
+    Parsed p;
+    WavError e = parse(f.f, p);
+    if (e == WavError::Ok) info = p.info;
+    return e;
 }
 
 bool WavReader::read_info(const std::string& path, int& channels, int64_t& frames, float& sampleRate, int& bitDepth) {
-    auto b = load(path);
-    if (!b) return false;
-    channels = b->channels(); frames = b->frames(); sampleRate = b->sample_rate(); bitDepth = 24;
+    WavInfo i;
+    if (read_info(path, i) != WavError::Ok) return false;
+    channels = i.channels; frames = i.frames; sampleRate = i.sample_rate; bitDepth = i.bit_depth;
     return true;
+}
+
+std::shared_ptr<AudioBuffer> WavReader::load(const std::string& path, WavError* err, size_t max_bytes) {
+    auto fail = [&](WavError e) { if (err) *err = e; return std::shared_ptr<AudioBuffer>(); };
+    File f(path, "rb");
+    if (!f.f) return fail(WavError::OpenFailed);
+    Parsed p;
+    WavError e = parse(f.f, p);
+    if (e != WavError::Ok) return fail(e);
+    if (p.info.frames <= 0) return fail(WavError::MissingData);
+    size_t need = (size_t)p.info.frames * (size_t)p.info.channels * sizeof(float);
+    if (max_bytes && need > max_bytes) return fail(WavError::TooLarge);
+
+    auto buf = std::make_shared<AudioBuffer>();
+    buf->allocate(p.info.channels, p.info.frames, p.info.sample_rate);
+    float* out = buf->data_mut().data();
+
+    const int bd = p.info.bit_depth;
+    const int bps = bd / 8;
+    const int ch = p.info.channels;
+    const size_t frame_bytes = (size_t)bps * ch;
+    std::fseek(f.f, (long)p.data_pos, SEEK_SET);
+
+    std::vector<uint8_t> chunk(frame_bytes * 4096);
+    int64_t done = 0;
+    while (done < p.info.frames) {
+        size_t want = (size_t)std::min<int64_t>(4096, p.info.frames - done);
+        size_t got = std::fread(chunk.data(), frame_bytes, want, f.f);
+        if (got == 0) break;
+        for (size_t i = 0; i < got; ++i)
+            for (int c = 0; c < ch; ++c) {
+                float v = decode(chunk.data() + i * frame_bytes + (size_t)c * bps, bd, p.info.is_float);
+                if (!is_finite_bits(v)) v = 0.f;
+                out[(done + (int64_t)i) * ch + c] = std::max(-1.f, std::min(1.f, v));
+            }
+        done += (int64_t)got;
+        if (got < want) break;
+    }
+    if (done < p.info.frames) {
+        // fewer frames than we sized for: shrink and flag
+        buf->resize_frames(done);
+        p.truncated = true;
+    }
+    if (buf->frames() <= 0) return fail(WavError::MissingData);
+    buf->build_peak_table();
+    if (err) *err = p.truncated ? WavError::Truncated : WavError::Ok;
+    return buf;
 }
 
 bool WavWriter::save_interleaved(const std::string& path, const float* data, int channels, int64_t frames, float sampleRate, int bitDepth) {
-    std::vector<const float*> ptrs(channels);
-    std::vector<std::vector<float>> planar(channels, std::vector<float>(frames));
-    for (int c=0;c<channels;++c) {
-        for (int64_t i=0;i<frames;++i) planar[c][i] = data[i*channels+c];
-        ptrs[c] = planar[c].data();
-    }
-    return save(path, ptrs.data(), channels, frames, sampleRate, bitDepth);
+    WavStreamWriter w;
+    if (!w.open(path, channels, (int)sampleRate, bitDepth)) return false;
+    if (!w.write(data, frames)) { w.close(); return false; }
+    return w.close();
 }
 
 bool WavWriter::save(const std::string& path, const float* const* data, int channels, int64_t frames, float sampleRate, int bitDepth) {
-    std::ofstream f(path, std::ios::binary);
-    if (!f.is_open()) return false;
-    int bytesPS = bitDepth/8;
-    int audioFormat = (bitDepth==32) ? 3 : 1;
-    uint32_t dataSize = (uint32_t)(frames * channels * bytesPS);
-    // RIFF
-    f.write("RIFF",4);
-    uint32_t riffSize = 36 + dataSize;
-    f.write((char*)&riffSize,4);
-    f.write("WAVE",4);
-    // fmt
-    f.write("fmt ",4);
-    uint32_t fmtSize = (bitDepth==32)?18:16;
-    f.write((char*)&fmtSize,4);
-    uint16_t af = (uint16_t)audioFormat;
-    uint16_t ch = (uint16_t)channels;
-    uint32_t sr = (uint32_t)sampleRate;
-    uint16_t bd = (uint16_t)bitDepth;
-    uint16_t ba = (uint16_t)(channels*bytesPS);
-    uint32_t br = sr*ba;
-    f.write((char*)&af,2);
-    f.write((char*)&ch,2);
-    f.write((char*)&sr,4);
-    f.write((char*)&br,4);
-    f.write((char*)&ba,2);
-    f.write((char*)&bd,2);
-    if (bitDepth==32) {
-        uint16_t cbSize=0; f.write((char*)&cbSize,2);
+    WavStreamWriter w;
+    if (!w.open(path, channels, (int)sampleRate, bitDepth)) return false;
+    std::vector<float> blk(4096 * (size_t)channels);
+    for (int64_t pos = 0; pos < frames; pos += 4096) {
+        int64_t n = std::min<int64_t>(4096, frames - pos);
+        for (int64_t i = 0; i < n; ++i)
+            for (int c = 0; c < channels; ++c) blk[(size_t)(i * channels + c)] = data[c][pos + i];
+        if (!w.write(blk.data(), n)) { w.close(); return false; }
     }
-    f.write("data",4);
-    f.write((char*)&dataSize,4);
-    for (int64_t i = 0; i < frames; ++i) {
-        for (int c=0;c<channels;++c) {
-            float v = std::max(-1.f,std::min(1.f,data[c][i]));
-            switch(bitDepth){
-                case 16: {
-                    int16_t s = (int16_t)(v*32767.f); f.write((char*)&s,2); break;
-                }
-                case 24: {
-                    int32_t s = (int32_t)(v*8388607.f);
-                    uint8_t b[3] = { (uint8_t)(s&0xff), (uint8_t)((s>>8)&0xff), (uint8_t)((s>>16)&0xff) };
-                    f.write((char*)b,3); break;
-                }
-                case 32: {
-                    f.write((char*)&v,4); break;
-                }
-            }
-        }
-    }
-    return true;
+    return w.close();
 }
 
 } // namespace wavestudio

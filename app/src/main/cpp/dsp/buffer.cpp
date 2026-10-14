@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cmath>
 #include <thread>
+#include <cstring>
 
 namespace wavestudio {
 
@@ -19,7 +20,7 @@ void AudioBuffer::load_from_float(const float* const* data, int channels, int64_
             interleaved_[f * channels + c] = data[c][f];
         }
     }
-    build_mipmaps();
+    build_peak_table();
 }
 
 int64_t AudioBuffer::read(float** dst, int channels, int64_t offset, int64_t count) const {
@@ -41,54 +42,67 @@ int64_t AudioBuffer::read(float** dst, int channels, int64_t offset, int64_t cou
     return count;
 }
 
-void AudioBuffer::build_mipmaps() {
-    mipmap_mins_.clear();
-    mipmap_maxs_.clear();
-    if (interleaved_.empty() || channels_ == 0) return;
+void AudioBuffer::resize_frames(int64_t frames) {
+    if (frames < 0) frames = 0;
+    if (frames >= frames_) return;
+    frames_ = frames;
+    interleaved_.resize(static_cast<size_t>(frames * channels_));
+    interleaved_.shrink_to_fit();
+    peak_min_.clear();
+    peak_max_.clear();
+}
 
-    // Level 0: per-sample (we synthesize from interleaved as peaks per frame, mono-mix for rendering)
-    int64_t n = frames_;
-    std::vector<float> cur_min(n), cur_max(n);
-    for (int64_t i = 0; i < n; ++i) {
-        float mn = 1e9f, mx = -1e9f;
-        for (int c = 0; c < channels_; ++c) {
-            float v = interleaved_[i * channels_ + c];
+void AudioBuffer::build_peak_table() {
+    peak_min_.clear();
+    peak_max_.clear();
+    if (interleaved_.empty() || channels_ == 0) return;
+    const int64_t blocks = (frames_ + kPeakBlock - 1) / kPeakBlock;
+    peak_min_.resize(static_cast<size_t>(blocks));
+    peak_max_.resize(static_cast<size_t>(blocks));
+    for (int64_t b = 0; b < blocks; ++b) {
+        int64_t f0 = b * kPeakBlock;
+        int64_t f1 = std::min<int64_t>(frames_, f0 + kPeakBlock);
+        float mn = 0.f, mx = 0.f;
+        for (int64_t i = f0 * channels_; i < f1 * channels_; ++i) {
+            float v = interleaved_[static_cast<size_t>(i)];
             mn = std::min(mn, v);
             mx = std::max(mx, v);
         }
-        cur_min[i] = mn;
-        cur_max[i] = mx;
-    }
-    mipmap_mins_.push_back(cur_min);
-    mipmap_maxs_.push_back(cur_max);
-
-    while (n > 1) {
-        int64_t nn = std::max<int64_t>(1, n / 2);
-        std::vector<float> mn(nn), mx(nn);
-        for (int64_t i = 0; i < nn; ++i) {
-            int64_t s = i * 2;
-            if (s + 1 < n) {
-                mn[i] = std::min(cur_min[s], cur_min[s + 1]);
-                mx[i] = std::max(cur_max[s], cur_max[s + 1]);
-            } else {
-                mn[i] = cur_min[s];
-                mx[i] = cur_max[s];
-            }
-        }
-        mipmap_mins_.push_back(mn);
-        mipmap_maxs_.push_back(mx);
-        cur_min = std::move(mn);
-        cur_max = std::move(mx);
-        n = nn;
+        peak_min_[static_cast<size_t>(b)] = mn;
+        peak_max_[static_cast<size_t>(b)] = mx;
     }
 }
 
-void AudioBuffer::get_mipmap(int level, const float*& mins, const float*& maxs, int64_t& frames) const {
-    if (level < 0) level = 0;
-    if (level >= (int)mipmap_mins_.size()) level = (int)mipmap_mins_.size() - 1;
-    mins = mipmap_mins_[level].data();
-    maxs = mipmap_maxs_[level].data();
-    frames = (int64_t)mipmap_mins_[level].size();
+void AudioBuffer::get_peaks(int64_t start, int64_t end, int bins, float* out) const {
+    if (bins <= 0) return;
+    for (int i = 0; i < bins; ++i) { out[2 * i] = 0.f; out[2 * i + 1] = 0.f; }
+    if (end <= start || frames_ <= 0) return;
+    const double span = (double)(end - start) / bins;
+    const bool use_table = span >= 2.0 * kPeakBlock && !peak_min_.empty();
+    for (int i = 0; i < bins; ++i) {
+        int64_t f0 = start + (int64_t)std::floor(i * span);
+        int64_t f1 = start + (int64_t)std::floor((i + 1) * span);
+        if (f1 <= f0) f1 = f0 + 1;
+        f0 = std::max<int64_t>(0, f0);
+        f1 = std::min<int64_t>(frames_, f1);
+        if (f1 <= f0) continue;
+        float mn = 0.f, mx = 0.f;
+        if (use_table) {
+            int64_t b0 = f0 / kPeakBlock, b1 = (f1 - 1) / kPeakBlock;
+            for (int64_t b = b0; b <= b1; ++b) {
+                mn = std::min(mn, peak_min_[static_cast<size_t>(b)]);
+                mx = std::max(mx, peak_max_[static_cast<size_t>(b)]);
+            }
+        } else {
+            for (int64_t k = f0 * channels_; k < f1 * channels_; ++k) {
+                float v = interleaved_[static_cast<size_t>(k)];
+                mn = std::min(mn, v);
+                mx = std::max(mx, v);
+            }
+        }
+        out[2 * i] = mn;
+        out[2 * i + 1] = mx;
+    }
 }
 
 float AudioBuffer::peak_db() const {
