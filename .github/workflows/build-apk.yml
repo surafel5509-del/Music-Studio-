@@ -112,10 +112,10 @@ jobs:
           find app/build -maxdepth 5 -type d 2>&1 | sort | head -80
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: wavestudio-apk
-          path: apk-out/WaveStudio-debug.apk
+          path: apk-out/
           retention-days: 90
 
       - name: Create GitHub Release (on tags)
