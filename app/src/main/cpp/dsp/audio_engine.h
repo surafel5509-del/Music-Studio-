@@ -1,158 +1,75 @@
 #pragma once
-#include <cstdint>
+// Thin AAudio device layer around EngineCore. It owns the streams and nothing else: all mixing,
+// effects and recording logic lives in engine/engine_core.* so it can be host-tested.
 #include <atomic>
-#include <thread>
-#include <mutex>
-#include <vector>
 #include <memory>
-#include <functional>
-#include "buffer.h"
-#include "clip.h"
-#include "mixer.h"
-#include "effects/effect_chain.h"
-#include "analysis/spectrum.h"
-#include "analysis/lufs.h"
+#include <mutex>
+#include <thread>
+#include <vector>
 #include <aaudio/AAudio.h>
-#include <SLES/OpenSLES.h>
+#include "engine/engine_core.h"
 
 namespace wavestudio {
 
-enum class EngineState { Stopped, Playing, Recording, Paused };
-
-struct TrackConfig {
-    int id = 0;
-    std::string name;
-    float volume = 1.0f;
-    float pan = 0.0f;
-    bool mute = false;
-    bool solo = false;
-    bool arm = false;
-    int input_channel = 0;
+struct DeviceStatus {
+    bool output_running = false;
+    bool input_running = false;
+    int sample_rate = 0;
+    int output_channels = 0;
+    int input_channels = 0;
+    int frames_per_burst = 0;
+    int buffer_frames = 0;
+    int xruns = 0;                  // AAudio underrun count of the output stream
+    int input_underruns = 0;        // output callbacks that found less input than needed
+    int restarts = 0;               // automatic stream re-opens (route change / disconnect)
+    int last_error = 0;             // last AAudio result code that was not OK
+    float est_output_latency_ms = 0;   // buffer-size based ESTIMATE, not a measurement
+    float est_input_latency_ms = 0;
+    int est_round_trip_frames = 0;
+    bool low_latency_mmap = false;
 };
 
-class AudioEngine {
+class AudioDevice {
 public:
-    static AudioEngine& instance();
+    static AudioDevice& instance();
 
-    bool start(float sampleRate = 48000.f, int bufferSize = 0);
+    // Opens the output stream (and the input stream if `want_input`). `preferred_rate` 0 = device
+    // native rate. Returns false when no output stream could be opened. The core is created on
+    // demand, and rebuilt from the model (clone) if the device picks a different rate.
+    bool start(int preferred_rate, bool want_input);
     void stop();
+    bool running() const { return out_ != nullptr; }
+    bool enable_input(bool on);                  // e.g. after RECORD_AUDIO was granted
+    DeviceStatus status();
 
-    // Transport
-    void play();
-    void pause();
-    void stop_transport();
-    void set_position(int64_t frame);
-    int64_t position() const { return position_.load(); }
-    void start_recording();
-    void stop_recording();
-    void set_loop(int64_t start_frame, int64_t end_frame, bool enabled);
-
-    EngineState state() const { return state_.load(); }
-    float sample_rate() const { return sample_rate_; }
-    int buffer_size() const { return buffer_size_; }
-    int input_channels() const { return input_channels_; }
-
-    // Tracks
-    int add_track(const std::string& name);
-    void remove_track(int id);
-    void set_track_config(int id, const TrackConfig& cfg);
-    TrackConfig get_track_config(int id) const;
-    TrackConfig* track_ptr(int id);
-    std::vector<TrackConfig> tracks() const;
-
-    // Clips
-    int add_clip(const Clip& c);
-    void remove_clip(int id);
-    std::vector<Clip> clips_for_track(int trackId) const;
-    std::vector<Clip> all_clips() const;
-
-    // Effects
-    EffectChain* track_chain(int trackId);
-    EffectChain* master_chain();
-
-    // Recording
-    void set_input_device(int deviceId);
-    void set_input_gain(float linear_gain);
-    void arm_track(int id, bool armed, int channel = 0);
-
-    // Metering / analysis
-    float master_peak() const { return master_peak_.load(); }
-    float master_rms() const { return master_rms_.load(); }
-    float input_level() const { return input_level_.load(); }
-    void get_spectrum(float* out_bins, int bins);
-    float get_lufs_integrated() const;
-    float get_lufs_momentary() const;
-
-    // Master
-    void set_master_volume(float v);
-    float master_volume() const { return master_volume_.load(); }
-
-    // Metronome
-    void set_metronome(bool on, float bpm, int sig_num = 4, int sig_den = 4);
-
-    // Callback for UI waveform updates
-    void set_state_listener(std::function<void(EngineState, int64_t)> f) { listener_ = std::move(f); }
+    std::shared_ptr<EngineCore> core();          // never null
+    void reset_core_for_new_project();           // drops all tracks / clips / effects
 
 private:
-    AudioEngine() = default;
-    ~AudioEngine() { stop(); }
-    AudioEngine(const AudioEngine&) = delete;
-    AudioEngine& operator=(const AudioEngine&) = delete;
-
-    bool open_streams(float requestedSampleRate, int requestedBuffer);
+    AudioDevice() = default;
+    bool open_output(int rate);
+    bool open_input(int rate);
     void close_streams();
-    void process_output(float** output, int numFrames, int numChannels);
-    void process_input(const float** input, int numFrames, int numChannels);
+    void schedule_reopen();
 
-    static aaudio_data_callback_result_t aaudio_out_cb(AAudioStream* stream, void* userData, void* audioData, int32_t numFrames);
-    static aaudio_data_callback_result_t aaudio_in_cb(AAudioStream* stream, void* userData, void* audioData, int32_t numFrames);
+    static aaudio_data_callback_result_t out_cb(AAudioStream*, void* user, void* data, int32_t frames);
+    static aaudio_data_callback_result_t in_cb(AAudioStream*, void* user, void* data, int32_t frames);
+    static void err_cb(AAudioStream*, void* user, aaudio_result_t err);
 
-    float sample_rate_ = 48000.f;
-    int buffer_size_ = 512;
-    int output_channels_ = 2;
-    int input_channels_ = 0;
-    int input_device_id_ = -1;
-
-    AAudioStream* output_stream_ = nullptr;
-    AAudioStream* input_stream_ = nullptr;
-
-    std::atomic<EngineState> state_{EngineState::Stopped};
-    std::atomic<int64_t> position_{0};
-    std::atomic<float> master_volume_{1.f};
-    std::atomic<float> master_peak_{0.f};
-    std::atomic<float> master_rms_{0.f};
-    std::atomic<float> input_level_{0.f};
-
-    mutable std::mutex engine_mutex_;
-    std::vector<TrackConfig> tracks_;
-    std::vector<Clip> clips_;
-    std::vector<std::unique_ptr<EffectChain>> track_effects_;
-    EffectChain master_chain_;
-    int next_track_id_ = 1;
-    int next_clip_id_ = 1;
-
-    Mixer mixer_;
-    SpectrumAnalyzer spectrum_;
-    LufsMeter lufs_;
-
-    // Recording buffers: for each armed track
-    std::vector<float> record_buffer_;
-    std::mutex record_mutex_;
-    float input_gain_ = 1.f;
-
-    // Loop
-    int64_t loop_start_ = 0, loop_end_ = 0;
-    bool loop_enabled_ = false;
-
-    // Metronome
-    bool metronome_on_ = false;
-    float metronome_bpm_ = 120.f;
-    int metronome_sig_num_ = 4;
-    int metronome_sig_den_ = 4;
-    int64_t metro_count_ = 0;
-    float metro_phase_ = 0.f;
-
-    std::function<void(EngineState, int64_t)> listener_;
+    std::mutex mu_;                              // serialises start/stop/reopen (never taken in callbacks)
+    std::shared_ptr<EngineCore> core_;
+    AAudioStream* out_ = nullptr;
+    AAudioStream* in_ = nullptr;
+    int rate_ = 0, out_ch_ = 2, in_ch_ = 0;
+    bool want_input_ = false;
+    std::atomic<bool> reopening_{false};
+    std::atomic<int> restarts_{0}, last_error_{0};
+    std::atomic<int> input_underruns_{0};
+    int preferred_rate_ = 0;
+    std::unique_ptr<SpscRing<float>> in_ring_;
+    std::vector<float> in_scratch_;
+    EngineCore* cb_core_ = nullptr;              // valid between stream open and close
+    std::atomic<int> in_channels_cb_{0};
 };
 
 } // namespace wavestudio

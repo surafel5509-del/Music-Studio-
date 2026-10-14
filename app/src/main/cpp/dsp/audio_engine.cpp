@@ -1,303 +1,266 @@
 #include "audio_engine.h"
-#include <aaudio/AAudio.h>
 #include <android/log.h>
-#include <cmath>
 #include <algorithm>
-#include <cstring>
+#include <chrono>
 
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "WSEngine", __VA_ARGS__)
-#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "WSEngine", __VA_ARGS__)
+#define LOG_TAG "WaveStudioEngine"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace wavestudio {
 
-AudioEngine& AudioEngine::instance() {
-    static AudioEngine inst;
-    return inst;
+AudioDevice& AudioDevice::instance() {
+    static AudioDevice* inst = new AudioDevice();   // intentionally leaked: callbacks may outlive static destruction
+    return *inst;
 }
 
-bool AudioEngine::start(float sampleRate, int bufferSize) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    if (output_stream_) return true;
-    if (!open_streams(sampleRate, bufferSize)) { close_streams(); return false; }
+std::shared_ptr<EngineCore> AudioDevice::core() {
+    std::lock_guard<std::mutex> l(mu_);
+    if (!core_) core_ = std::make_shared<EngineCore>(std::make_shared<MediaLibrary>(), 48000.f);
+    return core_;
+}
 
-    // Start output first; input optional
-    if (output_stream_) {
-        aaudio_result_t r = AAudioStream_requestStart(output_stream_);
-        if (r != AAUDIO_OK) { LOGE("Start output failed: %s", AAudio_convertResultToText(r)); close_streams(); return false; }
+void AudioDevice::reset_core_for_new_project() {
+    std::lock_guard<std::mutex> l(mu_);
+    const bool was_running = out_ != nullptr;
+    if (was_running) close_streams();
+    const float rate = core_ ? core_->engine_rate() : 48000.f;
+    core_ = std::make_shared<EngineCore>(std::make_shared<MediaLibrary>(), rate);
+    if (was_running) {
+        if (open_output(preferred_rate_ ? preferred_rate_ : (int)rate)) {
+            cb_core_ = core_.get();
+            if (want_input_) open_input(rate_);
+            AAudioStream_requestStart(out_);
+            if (in_) AAudioStream_requestStart(in_);
+        }
     }
-    state_ = EngineState::Paused;
-    spectrum_.init(2048, sample_rate_);
-    lufs_.set_sample_rate(sample_rate_);
-    lufs_.reset();
-    LOGI("Engine started, SR=%.1f, buffer=%d", sample_rate_, buffer_size_);
+}
+
+// ---------------------------------------------------------------------------------------------
+// callbacks (real-time: no locks, no allocation, no logging)
+// ---------------------------------------------------------------------------------------------
+aaudio_data_callback_result_t AudioDevice::out_cb(AAudioStream*, void* user, void* data, int32_t frames) {
+    auto* self = static_cast<AudioDevice*>(user);
+    EngineCore* core = self->cb_core_;
+    float* out = static_cast<float*>(data);
+    if (!core) { std::fill(out, out + (size_t)frames * 2, 0.f); return AAUDIO_CALLBACK_RESULT_CONTINUE; }
+    const int in_ch = self->in_channels_cb_.load(std::memory_order_acquire);
+    int32_t done = 0;
+    const int32_t kMax = (int32_t)(self->in_scratch_.size() / 2);
+    while (done < frames) {
+        const int32_t n = std::min(kMax, frames - done);
+        const float* in = nullptr;
+        if (in_ch > 0 && self->in_ring_) {
+            float* sc = self->in_scratch_.data();
+            const size_t want = (size_t)n * in_ch;
+            // Keep the ring from drifting into extra latency: discard the oldest input beyond ~4 bursts.
+            const size_t avail = self->in_ring_->size();
+            const size_t keep = want * 4;
+            if (avail > want + keep) self->in_ring_->skip(avail - want - keep);
+            const size_t got = self->in_ring_->pop(sc, want);
+            if (got < want) {
+                std::fill(sc + got, sc + want, 0.f);        // input glitch: stay in sync, count it
+                self->input_underruns_.fetch_add(1, std::memory_order_relaxed);
+                core->note_underrun();
+            }
+            in = sc;
+        }
+        core->render(out + (size_t)done * 2, n, in, in_ch);
+        done += n;
+    }
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+
+aaudio_data_callback_result_t AudioDevice::in_cb(AAudioStream*, void* user, void* data, int32_t frames) {
+    auto* self = static_cast<AudioDevice*>(user);
+    const int ch = self->in_channels_cb_.load(std::memory_order_acquire);
+    if (ch > 0 && self->in_ring_) self->in_ring_->push(static_cast<const float*>(data), (size_t)frames * ch);
+    return AAUDIO_CALLBACK_RESULT_CONTINUE;
+}
+
+void AudioDevice::err_cb(AAudioStream*, void* user, aaudio_result_t err) {
+    auto* self = static_cast<AudioDevice*>(user);
+    self->last_error_.store(err);
+    // Streams must not be closed from inside their own error callback: hand off to a worker.
+    if (err == AAUDIO_ERROR_DISCONNECTED || err == AAUDIO_ERROR_TIMEOUT || err == AAUDIO_ERROR_INVALID_STATE ||
+        err == AAUDIO_ERROR_NULL) {
+        self->schedule_reopen();
+    }
+}
+
+void AudioDevice::schedule_reopen() {
+    bool expected = false;
+    if (!reopening_.compare_exchange_strong(expected, true)) return;
+    std::thread([this] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));   // let the route settle
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            if (out_ != nullptr) {                                       // still supposed to be running
+                const bool wi = want_input_;
+                close_streams();
+                for (int attempt = 0; attempt < 5; ++attempt) {
+                    if (open_output(preferred_rate_)) {
+                        if (core_->engine_rate() != (float)rate_) core_ = core_->clone((float)rate_);
+                        cb_core_ = core_.get();
+                        if (wi) open_input(rate_);
+                        AAudioStream_requestStart(out_);
+                        if (in_) AAudioStream_requestStart(in_);
+                        restarts_.fetch_add(1);
+                        LOGI("streams re-opened (rate %d)", rate_);
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+                }
+            }
+        }
+        reopening_.store(false);
+    }).detach();
+}
+
+// ---------------------------------------------------------------------------------------------
+// stream management (control thread, mu_ held)
+// ---------------------------------------------------------------------------------------------
+bool AudioDevice::open_output(int rate) {
+    AAudioStreamBuilder* b = nullptr;
+    if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return false;
+    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
+    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+    AAudioStreamBuilder_setChannelCount(b, 2);
+    // Usage / content type are API 28+; minSdk is 26, so guard them at run time.
+    if (__builtin_available(android 28, *)) {
+        AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_MEDIA);
+        AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MUSIC);
+    }
+    if (rate > 0) AAudioStreamBuilder_setSampleRate(b, rate);
+    AAudioStreamBuilder_setDataCallback(b, &AudioDevice::out_cb, this);
+    AAudioStreamBuilder_setErrorCallback(b, &AudioDevice::err_cb, this);
+    aaudio_result_t r = AAudioStreamBuilder_openStream(b, &out_);
+    AAudioStreamBuilder_delete(b);
+    if (r != AAUDIO_OK) { last_error_.store(r); out_ = nullptr; LOGE("open output failed: %s", AAudio_convertResultToText(r)); return false; }
+    rate_ = AAudioStream_getSampleRate(out_);
+    out_ch_ = AAudioStream_getChannelCount(out_);
+    const int burst = AAudioStream_getFramesPerBurst(out_);
+    AAudioStream_setBufferSizeInFrames(out_, burst * 2);          // double-buffered: low latency, tolerant of one late burst
+    if (in_scratch_.empty()) in_scratch_.assign(8192 * 2, 0.f);
+    if (out_ch_ != 2) {
+        LOGE("output has %d channels (stereo required)", out_ch_);
+        AAudioStream_close(out_); out_ = nullptr; return false;
+    }
     return true;
 }
 
-void AudioEngine::stop() {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    close_streams();
-    state_ = EngineState::Stopped;
-}
-
-aaudio_data_callback_result_t AudioEngine::aaudio_out_cb(AAudioStream*, void* userData, void* audioData, int32_t numFrames) {
-    auto* self = static_cast<AudioEngine*>(userData);
-    int32_t ch = AAudioStream_getChannelCount(self->output_stream_);
-    float* out = static_cast<float*>(audioData);
-    std::memset(out, 0, sizeof(float)*numFrames*ch);
-
-    EngineState s = self->state_.load();
-    if (s == EngineState::Playing || s == EngineState::Recording) {
-        // Build mixer track list
-        std::vector<MixerTrack> mts;
-        {
-            std::lock_guard<std::mutex> g(self->engine_mutex_);
-            for (auto& t : self->tracks_) {
-                MixerTrack mt{};
-                float pan = t.pan;
-                mt.gain_l = t.volume * std::clamp(1.f - pan, 0.f, 1.f);
-                mt.gain_r = t.volume * std::clamp(1.f + pan, 0.f, 1.f);
-                mt.mute = t.mute;
-                mt.solo = t.solo;
-                mt.chain = (t.id-1 < (int)self->track_effects_.size()) ? self->track_effects_[t.id-1].get() : nullptr;
-                // find first clip overlapping playhead for now
-                int64_t ph = self->position_.load();
-                for (auto& c : self->clips_) {
-                    if (c.track_id == t.id && ph >= c.start_frame && ph < c.start_frame + c.length_frames) {
-                        mt.clip = &c; break;
-                    }
-                }
-                mts.push_back(mt);
-            }
-        }
-        float masterL = self->master_volume_.load();
-        float masterR = masterL;
-        self->mixer_.mix(out, numFrames, ch, self->sample_rate_, mts, self->position_.load(), masterL, masterR, &self->master_chain_);
-
-        // Metronome
-        if (self->metronome_on_) {
-            double beatFrames = 60.0 * self->sample_rate_ / (double)self->metronome_bpm_;
-            int beatsPerBar = self->metronome_sig_num_;
-            for (int i=0;i<numFrames;++i) {
-                int64_t ph = self->position_.load() + i;
-                int64_t beat = (int64_t)(ph / beatFrames);
-                double frac = (ph - beat*beatFrames) / beatFrames;
-                double clickEnv = exp(-frac * 40.0);
-                float t = (float)sin(2.0*3.14159265*1000.0*(ph/self->sample_rate_));
-                bool isDownbeat = (beat % beatsPerBar) == 0;
-                float amp = (float)(isDownbeat ? clickEnv*0.6 : clickEnv*0.3);
-                out[i*ch] += t*amp;
-                if (ch>1) out[i*ch+1] += t*amp;
-            }
-        }
-
-        // Advance position with loop
-        int64_t np = self->position_.load() + numFrames;
-        if (self->loop_enabled_ && self->loop_end_ > self->loop_start_ && np >= self->loop_end_) {
-            np = self->loop_start_ + (np - self->loop_end_);
-        }
-        self->position_.store(np);
-
-        // Metering
-        float pk = 0.f, sum=0.f;
-        for (int i=0;i<numFrames*ch;++i) pk = std::max(pk, fabsf(out[i]));
-        for (int i=0;i<numFrames;++i){ float l=out[i*ch], r=ch>1?out[i*ch+1]:l; sum+=0.5f*(l*l+r*r); }
-        self->master_peak_.store(pk);
-        self->master_rms_.store((float)sqrt(sum/std::max(1,numFrames)));
-
-        // Spectrum / LUFS
-        self->spectrum_.push(out, numFrames, ch);
-        // build planar ref for lufs
-        std::vector<float> pl(numFrames), pr(numFrames);
-        const float* planes[2] = {pl.data(), pr.data()};
-        for (int i=0;i<numFrames;++i){ pl[i]=out[i*ch]; if(ch>1)pr[i]=out[i*ch+1]; else pr[i]=out[i*ch]; }
-        self->lufs_.process(planes, numFrames, std::min(2, ch));
-    } else {
-        // Output silence
-    }
-
-    if (self->listener_) {
-        static int64_t last=0; int64_t np = self->position_.load();
-        if (np - last > (int64_t)(self->sample_rate_/15)) { self->listener_(self->state_.load(), np); last = np; }
-    }
-    return AAUDIO_CALLBACK_RESULT_CONTINUE;
-}
-
-aaudio_data_callback_result_t AudioEngine::aaudio_in_cb(AAudioStream*, void* userData, void* audioData, int32_t numFrames) {
-    auto* self = static_cast<AudioEngine*>(userData);
-    int ch = std::max(1, AAudioStream_getChannelCount(self->input_stream_));
-    const float* in = static_cast<const float*>(audioData);
-    float pk = 0.f;
-    for (int i=0;i<numFrames*ch;++i) pk = std::max(pk, fabsf(in[i]*self->input_gain_));
-    self->input_level_.store(pk);
-    if (self->state_ == EngineState::Recording) {
-        std::lock_guard<std::mutex> g(self->record_mutex_);
-        size_t cur = self->record_buffer_.size();
-        self->record_buffer_.resize(cur + (size_t)numFrames*2); // stereo
-        for (int i=0;i<numFrames;++i) {
-            self->record_buffer_[cur + i*2] = in[i*ch] * self->input_gain_;
-            self->record_buffer_[cur + i*2+1] = (ch>1)? in[i*ch+1]*self->input_gain_ : in[i*ch]*self->input_gain_;
-        }
-    }
-    return AAUDIO_CALLBACK_RESULT_CONTINUE;
-}
-
-bool AudioEngine::open_streams(float sr, int buf) {
-    AAudioStreamBuilder* b;
-    aaudio_result_t r = AAudio_createStreamBuilder(&b);
-    if (r != AAUDIO_OK) return false;
-    AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_OUTPUT);
-    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
-    AAudioStreamBuilder_setSampleRate(b, (int32_t)sr);
-    AAudioStreamBuilder_setChannelCount(b, 2);
-    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
-    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_EXCLUSIVE);
-    AAudioStreamBuilder_setDataCallback(b, &AudioEngine::aaudio_out_cb, this);
-    r = AAudioStreamBuilder_openStream(b, &output_stream_);
-    if (r != AAUDIO_OK) { LOGE("Output stream open failed: %s", AAudio_convertResultToText(r)); AAudioStreamBuilder_delete(b); return false; }
-    sample_rate_ = AAudioStream_getSampleRate(output_stream_);
-    buffer_size_ = AAudioStream_getBufferSizeInFrames(output_stream_);
-    if (buf > 0) AAudioStream_setBufferSizeInFrames(output_stream_, buf);
-
-    // Open input stream
+bool AudioDevice::open_input(int rate) {
+    AAudioStreamBuilder* b = nullptr;
+    if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return false;
     AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
-    AAudioStreamBuilder_setChannelCount(b, 1);
-    AAudioStreamBuilder_setDataCallback(b, &AudioEngine::aaudio_in_cb, this);
-    r = AAudioStreamBuilder_openStream(b, &input_stream_);
-    if (r == AAUDIO_OK) {
-        input_channels_ = AAudioStream_getChannelCount(input_stream_);
-        AAudioStream_requestStart(input_stream_);
-    } else {
-        LOGI("Input stream open failed (non-fatal): %s", AAudio_convertResultToText(r));
-        input_stream_ = nullptr;
-        input_channels_ = 0;
+    AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+    AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
+    AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+    bool preset_set = false;
+    if (__builtin_available(android 28, *)) {
+        AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_UNPROCESSED);   // no AGC / noise suppression on a music recording
+        preset_set = true;
+    }
+    if (rate > 0) AAudioStreamBuilder_setSampleRate(b, rate);
+    AAudioStreamBuilder_setDataCallback(b, &AudioDevice::in_cb, this);
+    AAudioStreamBuilder_setErrorCallback(b, &AudioDevice::err_cb, this);
+    aaudio_result_t r = AAudioStreamBuilder_openStream(b, &in_);
+    if (r != AAUDIO_OK && preset_set) {
+        // Some devices reject UNPROCESSED: retry with the generic preset.
+        if (__builtin_available(android 28, *)) AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_GENERIC);
+        r = AAudioStreamBuilder_openStream(b, &in_);
     }
     AAudioStreamBuilder_delete(b);
+    if (r != AAUDIO_OK) { last_error_.store(r); in_ = nullptr; LOGE("open input failed: %s", AAudio_convertResultToText(r)); return false; }
+    const int ch = AAudioStream_getChannelCount(in_);
+    if (AAudioStream_getSampleRate(in_) != rate_ || ch < 1 || ch > 2) {
+        LOGE("input stream rate/channels unsupported (%d Hz, %d ch)", AAudioStream_getSampleRate(in_), ch);
+        AAudioStream_close(in_); in_ = nullptr; return false;
+    }
+    if (!in_ring_) in_ring_ = std::make_unique<SpscRing<float>>(1u << 16);
+    in_ring_->skip(in_ring_->size());          // stale audio from a previous stream; callbacks are idle (ch == 0)
+    in_ch_ = ch;
+    in_channels_cb_.store(ch, std::memory_order_release);
+    AAudioStream_setBufferSizeInFrames(in_, AAudioStream_getFramesPerBurst(in_) * 2);
     return true;
 }
 
-void AudioEngine::close_streams() {
-    if (output_stream_) { AAudioStream_requestStop(output_stream_); AAudioStream_close(output_stream_); output_stream_=nullptr; }
-    if (input_stream_) { AAudioStream_requestStop(input_stream_); AAudioStream_close(input_stream_); input_stream_=nullptr; }
+void AudioDevice::close_streams() {
+    cb_core_ = nullptr;
+    in_channels_cb_.store(0, std::memory_order_release);
+    // AAudioStream_close blocks until the callback has returned, so after this nothing touches the core.
+    if (out_) { AAudioStream_requestStop(out_); AAudioStream_close(out_); out_ = nullptr; }
+    if (in_) { AAudioStream_requestStop(in_); AAudioStream_close(in_); in_ = nullptr; }
+    in_ch_ = 0;
 }
 
-void AudioEngine::play() {
-    state_ = EngineState::Playing;
-    if (output_stream_) AAudioStream_requestStart(output_stream_);
-}
-void AudioEngine::pause() {
-    state_ = (state_ == EngineState::Recording) ? EngineState::Recording : EngineState::Paused;
-}
-void AudioEngine::stop_transport() {
-    state_ = EngineState::Paused;
-    position_ = 0;
-}
-void AudioEngine::set_position(int64_t f) { position_.store(std::max<int64_t>(0,f)); }
-void AudioEngine::start_recording() {
-    {
-        std::lock_guard<std::mutex> g(record_mutex_);
-        record_buffer_.clear();
+bool AudioDevice::start(int preferred_rate, bool want_input) {
+    std::lock_guard<std::mutex> l(mu_);
+    if (out_) { return true; }
+    preferred_rate_ = preferred_rate;
+    want_input_ = want_input;
+    if (!core_) core_ = std::make_shared<EngineCore>(std::make_shared<MediaLibrary>(), 48000.f);
+    if (!open_output(preferred_rate)) return false;
+    if (core_->engine_rate() != (float)rate_) {
+        LOGI("device rate %d differs from core rate %.0f: rebuilding core", rate_, core_->engine_rate());
+        core_ = core_->clone((float)rate_);
     }
-    state_ = EngineState::Recording;
-    if (output_stream_) AAudioStream_requestStart(output_stream_);
+    cb_core_ = core_.get();
+    if (want_input) open_input(rate_);
+    // Round-trip latency estimate used to shift recorded takes onto the timeline.
+    const int64_t comp = AAudioStream_getBufferSizeInFrames(out_) + (in_ ? AAudioStream_getBufferSizeInFrames(in_) : 0);
+    core_->set_input_latency_frames(comp);
+    if (AAudioStream_requestStart(out_) != AAUDIO_OK) { close_streams(); return false; }
+    if (in_) AAudioStream_requestStart(in_);
+    return true;
 }
-void AudioEngine::stop_recording() {
-    state_ = EngineState::Paused;
-    // Build AudioBuffer from record_buffer_ and add as a clip on armed track
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    int armedId = -1;
-    for (auto& t: tracks_) if (t.arm) { armedId = t.id; break; }
-    if (armedId < 0) return;
-    std::vector<float> data;
-    {
-        std::lock_guard<std::mutex> g(record_mutex_);
-        data = std::move(record_buffer_);
-        record_buffer_.clear();
+
+bool AudioDevice::enable_input(bool on) {
+    std::lock_guard<std::mutex> l(mu_);
+    want_input_ = on;
+    if (!out_) return false;
+    if (on && !in_) {
+        if (!open_input(rate_)) return false;
+        const int64_t comp = AAudioStream_getBufferSizeInFrames(out_) + AAudioStream_getBufferSizeInFrames(in_);
+        core_->set_input_latency_frames(comp);
+        AAudioStream_requestStart(in_);
+        return true;
     }
-    if (data.empty()) return;
-    int64_t frames = (int64_t)data.size()/2;
-    auto buf = std::make_shared<AudioBuffer>();
-    buf->allocate(2, frames, sample_rate_);
-    std::memcpy(buf->data_mut().data(), data.data(), data.size()*sizeof(float));
-    buf->build_mipmaps();
-    Clip c;
-    c.id = next_clip_id_++;
-    c.track_id = armedId;
-    c.buffer = buf;
-    c.start_frame = position_.load() - frames;
-    if (c.start_frame < 0) c.start_frame = 0;
-    c.length_frames = frames;
-    clips_.push_back(c);
-}
-void AudioEngine::set_loop(int64_t s, int64_t e, bool en) { loop_start_=s; loop_end_=e; loop_enabled_=en; }
-
-int AudioEngine::add_track(const std::string&) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    TrackConfig t; t.id = next_track_id_++; t.name = "Track " + std::to_string(t.id);
-    tracks_.push_back(t);
-    track_effects_.emplace_back(std::make_unique<EffectChain>());
-    track_effects_.back()->set_sample_rate(sample_rate_);
-    return t.id;
-}
-void AudioEngine::remove_track(int id) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    tracks_.erase(std::remove_if(tracks_.begin(), tracks_.end(), [&](auto& t){return t.id==id;}), tracks_.end());
-}
-void AudioEngine::set_track_config(int id, const TrackConfig& c) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    for (auto& t: tracks_) if (t.id==id) t=c;
-}
-TrackConfig AudioEngine::get_track_config(int id) const {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    for (auto& t: tracks_) if (t.id==id) return t;
-    return TrackConfig{};
-}
-TrackConfig* AudioEngine::track_ptr(int id) {
-    for (auto& t: tracks_) if (t.id==id) return &t;
-    return nullptr;
-}
-std::vector<TrackConfig> AudioEngine::tracks() const {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    return tracks_;
-}
-int AudioEngine::add_clip(const Clip& c) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    Clip copy = c; copy.id = next_clip_id_++;
-    clips_.push_back(copy); return copy.id;
-}
-void AudioEngine::remove_clip(int id) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    clips_.erase(std::remove_if(clips_.begin(), clips_.end(), [&](auto& c){return c.id==id;}), clips_.end());
-}
-std::vector<Clip> AudioEngine::clips_for_track(int trackId) const {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    std::vector<Clip> r;
-    for (auto& c: clips_) if (c.track_id==trackId) r.push_back(c);
-    return r;
-}
-std::vector<Clip> AudioEngine::all_clips() const {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    return clips_;
-}
-EffectChain* AudioEngine::track_chain(int trackId) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    for (size_t i=0;i<tracks_.size();++i) if (tracks_[i].id==trackId) return track_effects_[i].get();
-    return nullptr;
-}
-EffectChain* AudioEngine::master_chain() { return &master_chain_; }
-
-void AudioEngine::set_input_device(int) {}
-void AudioEngine::set_input_gain(float g) { input_gain_ = g; }
-void AudioEngine::arm_track(int id, bool armed, int channel) {
-    std::lock_guard<std::mutex> lk(engine_mutex_);
-    for (auto& t: tracks_) { if (t.id==id){t.arm=armed; t.input_channel=channel;} else if (armed) t.arm=false; }
+    if (!on && in_) {
+        in_channels_cb_.store(0, std::memory_order_release);
+        AAudioStream_requestStop(in_); AAudioStream_close(in_); in_ = nullptr; in_ch_ = 0;
+    }
+    return in_ != nullptr || !on;
 }
 
-void AudioEngine::get_spectrum(float* out_bins, int bins) { spectrum_.get_magnitudes(out_bins, bins); }
-float AudioEngine::get_lufs_integrated() const { return lufs_.integrated(); }
-float AudioEngine::get_lufs_momentary() const { return lufs_.momentary(); }
-void AudioEngine::set_master_volume(float v) { master_volume_.store(v); }
-void AudioEngine::set_metronome(bool on, float bpm, int sig_num, int sig_den) {
-    metronome_on_=on; metronome_bpm_=bpm; metronome_sig_num_=sig_num; metronome_sig_den_=sig_den;
+void AudioDevice::stop() {
+    std::lock_guard<std::mutex> l(mu_);
+    close_streams();
+}
+
+DeviceStatus AudioDevice::status() {
+    std::lock_guard<std::mutex> l(mu_);
+    DeviceStatus s;
+    s.output_running = out_ != nullptr;
+    s.input_running = in_ != nullptr;
+    s.input_channels = in_ch_;
+    s.restarts = restarts_.load();
+    s.last_error = last_error_.load();
+    s.input_underruns = input_underruns_.load();
+    if (out_) {
+        s.sample_rate = rate_;
+        s.output_channels = out_ch_;
+        s.frames_per_burst = AAudioStream_getFramesPerBurst(out_);
+        s.buffer_frames = AAudioStream_getBufferSizeInFrames(out_);
+        s.xruns = AAudioStream_getXRunCount(out_);
+        s.est_output_latency_ms = 1000.f * s.buffer_frames / std::max(1, rate_);
+        s.low_latency_mmap = AAudioStream_getPerformanceMode(out_) == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY;
+    }
+    s.est_round_trip_frames = (out_ ? AAudioStream_getBufferSizeInFrames(out_) : 0) + (in_ ? AAudioStream_getBufferSizeInFrames(in_) : 0);
+    if (in_) s.est_input_latency_ms = 1000.f * AAudioStream_getBufferSizeInFrames(in_) / std::max(1, rate_);
+    return s;
 }
 
 } // namespace wavestudio

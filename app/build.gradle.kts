@@ -28,7 +28,7 @@ android {
 
         externalNativeBuild {
             cmake {
-                cppFlags += listOf("-std=c++17", "-O3", "-ffast-math", "-fvisibility=hidden")
+                cppFlags += listOf("-std=c++17", "-O3", "-fvisibility=hidden")
                 arguments += listOf(
                     "-DANDROID_STL=c++_shared"
                 )

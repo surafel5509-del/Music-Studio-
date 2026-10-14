@@ -9,30 +9,34 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(WS_ENGINE_SOURCES
         jni/native_lib.cpp
         dsp/audio_engine.cpp
-        dsp/mixer.cpp
         dsp/buffer.cpp
-        dsp/effects/effect_chain.cpp
+        dsp/engine/engine_core.cpp
+        dsp/engine/media.cpp
+        dsp/engine/recorder.cpp
+        dsp/engine/offline_export.cpp
+        dsp/effects/effect_factory.cpp
         dsp/effects/eq.cpp
         dsp/effects/compressor.cpp
         dsp/effects/reverb.cpp
         dsp/effects/distortion.cpp
-        dsp/effects/pitch_shift.cpp
+        dsp/effects/utility.cpp
         dsp/analysis/spectrum.cpp
         dsp/analysis/lufs.cpp
         dsp/file_io/wav_reader.cpp
-        dsp/file_io/flac_io.cpp
-        dsp/file_io/mp3_io.cpp
+        dsp/file_io/wav_stream_writer.cpp
         dsp/resampler/resampler.cpp
-        dsp/midi/midi_processor.cpp
-        dsp/util/simd_utils.cpp
 )
+
+# Not built into the app (stubs / not yet integrated): dsp/file_io/flac_io.cpp, dsp/file_io/mp3_io.cpp,
+# dsp/midi/midi_processor.cpp, dsp/effects/pitch_shift.cpp, dsp/util/simd_utils.cpp.
+# See docs/ARCHITECTURE.md ("What is and is not implemented").
 
 add_library(wavestudio SHARED ${WS_ENGINE_SOURCES})
 
 target_compile_options(wavestudio PRIVATE
         -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
         -fvisibility=hidden -fvisibility-inlines-hidden
-        -ffast-math -fno-math-errno
+        -fno-math-errno
 )
 
 target_compile_options(wavestudio PRIVATE
