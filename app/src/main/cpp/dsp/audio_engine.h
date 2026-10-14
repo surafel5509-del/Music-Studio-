@@ -7,12 +7,15 @@
 #include <memory>
 #include <functional>
 #include "buffer.h"
-#include "mixer.h"
 #include "effects/effect_chain.h"
 #include "analysis/spectrum.h"
 #include "analysis/lufs.h"
 #include <aaudio/AAudio.h>
 #include <SLES/OpenSLES.h>
+
+namespace wavestudio {
+class Mixer;
+
 
 // AAudioStream and aaudio_data_callback_result_t are defined in <aaudio/AAudio.h>
 typedef struct AAudioStreamStruct AAudioStream;

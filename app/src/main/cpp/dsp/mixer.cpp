@@ -1,4 +1,5 @@
 #include "mixer.h"
+#include "../audio_engine.h"
 #include "effects/effect_chain.h"
 #include <algorithm>
 #include <cmath>
