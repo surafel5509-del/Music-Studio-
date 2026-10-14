@@ -50,17 +50,29 @@ jobs:
           gradle wrapper --gradle-version 8.4 --distribution-type bin
           chmod +x gradlew
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Install Android command-line tools
+        run: |
+          set -e
+          export ANDROID_SDK_ROOT=$HOME/android-sdk
+          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
+          CMDFN=commandlinetools-linux-11076708_latest.zip
+          wget -q https://dl.google.com/android/repository/$CMDFN -O /tmp/cmdtools.zip
+          unzip -q /tmp/cmdtools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
+          mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          yes | sdkmanager --licenses > /dev/null || true
 
       - name: Install required Android SDK components
         run: |
-          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --install \
+          sdkmanager --install \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
             "ndk;25.2.9519653" \
-            "cmake;3.22.1" \
-            "platform-tools" 2>&1 | tail -20
+            "cmake;3.22.1" 2>&1 | tail -20
 
       - name: Create keystore for release build
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
@@ -76,19 +88,13 @@ jobs:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS }}
 
-      - name: Write local.properties
-        run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
       - name: Build debug APK
         if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
-        id: build_debug
-        run: ./gradlew assembleDebug --stacktrace 2>&1 | tail -200
+        run: ./gradlew assembleDebug --stacktrace 2>&1 | tail -300
 
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
-        id: build_release
-        run: |
-          ./gradlew assembleRelease --stacktrace 2>&1 | tail -200
+        run: ./gradlew assembleRelease --stacktrace 2>&1 | tail -300
         env:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
@@ -97,16 +103,13 @@ jobs:
         id: apk
         run: |
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
-            echo "path=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
-            echo "name=WaveStudio-release.apk" >> "$GITHUB_OUTPUT"
+            echo "path=app/build/outputs/apk/release/app-release.apk" >> $GITHUB_OUTPUT
+            echo "name=WaveStudio-release.apk" >> $GITHUB_OUTPUT
           elif [ -f app/build/outputs/apk/debug/app-debug.apk ]; then
-            echo "path=app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
+            echo "path=app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_OUTPUT
             echo "name=WaveStudio-debug.apk" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::APK not found. Build listing follows:"
-            find app/build/outputs -type f -name "*.apk" -o -name "*.aab" 2>/dev/null || true
-            ls -R app/build/outputs/apk/ 2>/dev/null || true
-            exit 1
+            echo "::error::APK not found"; find app/build/outputs -type f -name "*.apk" -o -name "*.aab" 2>/dev/null; ls -R app/build/outputs/apk/ 2>/dev/null; exit 1
           fi
 
       - name: Upload APK artifact
