@@ -90,7 +90,9 @@ jobs:
 
       - name: Build debug APK
         if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
-        run: ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log | tail -300
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee build.log | tail -300
 
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
