@@ -189,6 +189,46 @@ class EditorViewModel @Inject constructor(
     fun setClipGain(id: Int, db: Float) { session.edit("Clip gain", "cgain:$id") { EditOps.setClipGain(it, id, db) } }
     fun setClipFades(id: Int, fadeIn: Long, fadeOut: Long) { session.edit("Clip fades", "cfade:$id") { EditOps.setClipFades(it, id, fadeIn, fadeOut) } }
 
+    /** Sets the clip gain so its peak reaches -1 dBFS (non-destructive; the audio file is untouched). */
+    fun normalizeSelectedClip() {
+        val id = _selectedClip.value ?: return
+        viewModelScope.launch {
+            val peak = session.clipPeak(id)
+            if (peak == null) { say("Could not read the audio of this clip."); return@launch }
+            val g = EditOps.normalizeGainDb(peak, -1f)
+            if (g == null) { say("This clip is silent; nothing to normalize."); return@launch }
+            session.edit("Normalize clip") { EditOps.setClipGain(it, id, g) }
+            say("Clip gain set to %+.1f dB".format(g))
+        }
+    }
+
+    // ------------------------------------------------------------------ markers and punch
+
+    fun addMarkerAtPlayhead() {
+        val at = engine.position()
+        session.edit("Add marker") { EditOps.addMarker(it, at).first }
+    }
+    fun renameMarker(id: Int, name: String) { session.edit("Rename marker") { EditOps.renameMarker(it, id, name) } }
+    fun deleteMarker(id: Int) { session.edit("Delete marker") { EditOps.removeMarker(it, id) } }
+    fun jumpToMarker(frame: Long) = seek(frame)
+    fun seekNextMarker() { EditOps.nextMarker(session.doc.value, engine.position())?.let { seek(it.frame) } ?: say("No later marker.") }
+    fun seekPrevMarker() { EditOps.prevMarker(session.doc.value, engine.position())?.let { seek(it.frame) } ?: seek(0L) }
+
+    fun setPunchInAtPlayhead() = setPunchPoint(isIn = true)
+    fun setPunchOutAtPlayhead() = setPunchPoint(isIn = false)
+    private fun setPunchPoint(isIn: Boolean) {
+        val at = engine.position()
+        val d = session.doc.value
+        val (i, o) = if (isIn) at to (if (d.punchOut > at + EditOps.MIN_CLIP) d.punchOut else at + 5L * TIMELINE_RATE)
+                     else (if (d.punchIn < at - EditOps.MIN_CLIP) d.punchIn else (at - 5L * TIMELINE_RATE).coerceAtLeast(0)) to at
+        if (!session.edit("Punch range") { EditOps.setPunchRange(it, i, o) }) say("Punch range not changed (out must be after in).")
+    }
+    fun togglePunch() {
+        val d = session.doc.value
+        if (!session.edit("Punch") { EditOps.setPunchEnabled(it, !d.punchEnabled) } && !d.punchEnabled)
+            say("Set punch in and out points first (move the playhead, then use Punch in / Punch out).")
+    }
+
     // ------------------------------------------------------------------ arrangement
 
     fun setBpm(bpm: Float) { session.edit("Tempo", "bpm") { it.copy(bpm = bpm.coerceIn(20f, 400f)) } }

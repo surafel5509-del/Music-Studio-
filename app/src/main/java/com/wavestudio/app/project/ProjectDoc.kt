@@ -65,6 +65,10 @@ data class ProjectDoc(
     val loopStart: Long = 0,
     val loopEnd: Long = 0,
     val loopEnabled: Boolean = false,
+    /** Punch recording: while recording, only [punchIn, punchOut) is written to the take. */
+    val punchEnabled: Boolean = false,
+    val punchIn: Long = 0,
+    val punchOut: Long = 0,
     val metronome: Boolean = false,
     val countInBars: Int = 0,
     val nextId: Int = 1,

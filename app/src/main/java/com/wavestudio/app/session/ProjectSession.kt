@@ -182,6 +182,9 @@ class ProjectSession @Inject constructor(
         _status.value = SessionStatus()
     }
 
+    fun isOpen(projectId: Long) = _status.value.loaded && _status.value.projectId == projectId
+    suspend fun closeIfOpen(projectId: Long) { if (isOpen(projectId)) closeCurrent() }
+
     fun dismissMessages() { _status.update { it.copy(messages = emptyList()) } }
 
     // ------------------------------------------------------------------ editing
@@ -285,6 +288,20 @@ class ProjectSession @Inject constructor(
         } catch (t: Throwable) { t.message ?: "Import failed" }
     }
 
+    // ------------------------------------------------------------------ analysis helpers
+
+    /** Largest absolute sample of the clip's audible part at unity gain (ignores clip gain and fades), or null if unreadable. */
+    suspend fun clipPeak(clipId: Int): Float? = withContext(Dispatchers.IO) {
+        val c = _doc.value.clip(clipId) ?: return@withContext null
+        val f = mediaFile(c.media)?.takeIf { it.isFile } ?: return@withContext null
+        val rate = TIMELINE_RATE.toDouble()
+        val bins = (c.lengthFrames / 512L).toInt().coerceIn(64, 20000)
+        val p = controller.peaks(f.absolutePath, c.offsetFrames / rate, (c.offsetFrames + c.lengthFrames) / rate, bins) ?: return@withContext null
+        var m = 0f
+        for (v in p) m = maxOf(m, kotlin.math.abs(v))
+        m
+    }
+
     // ------------------------------------------------------------------ recording
 
     suspend fun startRecording(trackId: Int, bitDepth: Int = 24): RecordStart = withContext(serial) { startRecordingNow(trackId, bitDepth) }
@@ -310,6 +327,18 @@ class ProjectSession @Inject constructor(
         recWavName = name; recTrackId = trackId
         _recordingTrack.value = trackId
         controller.play()
+        // Punch recording: once the transport is past the punch-out point the take is complete, so end it
+        // (the engine already stopped writing at punch-out; this just stops the transport and commits the clip).
+        val d = _doc.value
+        if (d.punchEnabled && d.punchOut > d.punchIn) {
+            val out = d.punchOut + TIMELINE_RATE / 20
+            serialScope.launch {
+                while (recWavName == name) {
+                    delay(40)
+                    if (recWavName == name && controller.position() >= out) { stopRecordingNow(); break }
+                }
+            }
+        }
         return RecordStart.OK
     }
 

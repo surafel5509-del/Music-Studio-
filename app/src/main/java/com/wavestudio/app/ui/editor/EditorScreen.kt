@@ -2,6 +2,16 @@ package com.wavestudio.app.ui.editor
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.FormatListNumbered
+import androidx.compose.material.icons.filled.Login
+import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -87,6 +97,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.wavestudio.app.engine.MasterMeters
 import com.wavestudio.app.engine.TransportState
+import com.wavestudio.app.project.MarkerDoc
 import com.wavestudio.app.project.TIMELINE_RATE
 import com.wavestudio.app.project.TrackDoc
 import com.wavestudio.app.session.ExportOptions
@@ -143,6 +154,7 @@ fun EditorScreen(
     var showMixer by rememberSaveable { mutableStateOf(false) }
     var showAnalyzer by rememberSaveable { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
+    var showMarkers by remember { mutableStateOf(false) }
     var renameTrack by remember { mutableStateOf<TrackDoc?>(null) }
     var pendingExport by remember { mutableStateOf<ExportOptions?>(null) }
     val snackbar = remember { SnackbarHostState() }
@@ -228,8 +240,18 @@ fun EditorScreen(
                     ToolbarButton(Icons.Default.ZoomIn, "Zoom +", onClick = { zoom = (zoom * 1.5f).coerceAtMost(4000f) })
                     Text("BPM", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
                     BpmStepper(bpm = doc.bpm, onValue = vm::setBpm)
+                    Spacer(Modifier.width(8.dp))
+                    ToolbarButton(Icons.Default.SkipPrevious, "Prev mark", onClick = vm::seekPrevMarker)
+                    ToolbarButton(Icons.Default.Flag, "Add mark", onClick = vm::addMarkerAtPlayhead)
+                    ToolbarButton(Icons.Default.SkipNext, "Next mark", onClick = vm::seekNextMarker)
+                    ToolbarButton(Icons.Default.FormatListNumbered, "Markers", onClick = { showMarkers = true }, active = doc.markers.isNotEmpty())
+                    Spacer(Modifier.width(8.dp))
+                    ToolbarButton(Icons.Default.FiberManualRecord, "Punch", onClick = vm::togglePunch, active = doc.punchEnabled)
+                    ToolbarButton(Icons.Default.Login, "Punch in", onClick = vm::setPunchInAtPlayhead)
+                    ToolbarButton(Icons.Default.Logout, "Punch out", onClick = vm::setPunchOutAtPlayhead)
                     if (selectedClip != null) {
                         Spacer(Modifier.width(8.dp))
+                        ToolbarButton(Icons.Default.GraphicEq, "Normalize", onClick = vm::normalizeSelectedClip)
                         ToolbarButton(Icons.Default.ContentCut, "Split", onClick = vm::splitAtPlayhead)
                         ToolbarButton(Icons.Default.ContentCopy, "Duplicate", onClick = vm::duplicateSelectedClip)
                         ToolbarButton(Icons.Default.Delete, "Delete", onClick = vm::deleteSelectedClip)
@@ -273,6 +295,7 @@ fun EditorScreen(
                     totalFrames = max(max(projectEnd, playhead) + (30L * TIMELINE_RATE), 120L * TIMELINE_RATE),
                     bpm = doc.bpm, beatsPerBar = doc.beatsPerBar,
                     loopEnabled = doc.loopEnabled, loopStart = doc.loopStart, loopEnd = doc.loopEnd,
+                    markers = doc.markers, punchEnabled = doc.punchEnabled, punchIn = doc.punchIn, punchOut = doc.punchOut,
                     selectedClipId = selectedClip, recordingTrackId = recordingTrack,
                     zoom = zoom, scrollYState = scrollY, onZoomChange = { zoom = it },
                     onSeek = vm::seek, onSelectClip = vm::selectClip,
@@ -329,6 +352,11 @@ fun EditorScreen(
             }
         )
     }
+    if (showMarkers) MarkersDialog(
+        markers = doc.markers, onDismiss = { showMarkers = false },
+        onJump = { vm.jumpToMarker(it); showMarkers = false },
+        onRename = vm::renameMarker, onDelete = vm::deleteMarker
+    )
     if (showExport) {
         ExportDialog(
             onDismiss = { showExport = false },
@@ -481,6 +509,45 @@ fun TransportBar(
             ToolbarButton(Icons.Default.Timer, "Click", active = metronome, onClick = onToggleMetronome)
             ToolbarButton(Icons.Default.Timer, if (countInBars == 0) "No count" else "Count $countInBars", active = countInBars > 0, onClick = onCycleCountIn)
         }
+    }
+}
+
+@Composable
+private fun MarkersDialog(
+    markers: List<MarkerDoc>, onDismiss: () -> Unit, onJump: (Long) -> Unit,
+    onRename: (Int, String) -> Unit, onDelete: (Int) -> Unit
+) {
+    var editing by remember { mutableStateOf<MarkerDoc?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Markers") },
+        text = {
+            if (markers.isEmpty()) Text("No markers yet. Move the playhead and tap “Add mark”.")
+            else LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                items(markers, key = { it.id }) { m ->
+                    val sec = m.frame / TIMELINE_RATE.toDouble()
+                    Row(Modifier.fillMaxWidth().clickable { onJump(m.frame) }.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(m.name, fontWeight = FontWeight.SemiBold)
+                            Text("%d:%05.2f".format((sec / 60).toInt(), sec % 60), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { editing = m }) { Icon(Icons.Default.Edit, "Rename marker") }
+                        IconButton(onClick = { onDelete(m.id) }) { Icon(Icons.Default.Delete, "Delete marker") }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+    editing?.let { m ->
+        var name by remember(m.id) { mutableStateOf(m.name) }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text("Rename marker") },
+            text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { onRename(m.id, name); editing = null }, enabled = name.isNotBlank()) { Text("Rename") } },
+            dismissButton = { TextButton(onClick = { editing = null }) { Text("Cancel") } }
+        )
     }
 }
 

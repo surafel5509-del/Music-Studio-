@@ -8,6 +8,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -16,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.wavestudio.app.ui.home.ProjectCard
+import com.wavestudio.app.ui.home.ProjectCardActions
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -25,7 +28,12 @@ fun ProjectsScreen(
     vm: ProjectsViewModel = hiltViewModel()
 ) {
     val projects by vm.projects.collectAsState()
+    val message by vm.message.collectAsState()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it); vm.consumeMessage() } }
+    val actions = remember(vm) { ProjectCardActions(vm::renameProject, vm::duplicateProject, vm::deleteProject) }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text("My Projects") },
@@ -57,7 +65,7 @@ fun ProjectsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(projects) { p -> ProjectCard(p, onClick = { onOpenProject(p.id) }) }
+                items(projects) { p -> ProjectCard(p, onClick = { onOpenProject(p.id) }, actions = actions) }
             }
         }
     }

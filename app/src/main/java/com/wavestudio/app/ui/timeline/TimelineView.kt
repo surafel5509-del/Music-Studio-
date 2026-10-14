@@ -28,6 +28,7 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.wavestudio.app.project.ClipDoc
+import com.wavestudio.app.project.MarkerDoc
 import com.wavestudio.app.project.TIMELINE_RATE
 import com.wavestudio.app.project.TrackDoc
 import com.wavestudio.app.ui.editor.PeakData
@@ -58,6 +59,10 @@ fun TimelineView(
     loopEnabled: Boolean,
     loopStart: Long,
     loopEnd: Long,
+    markers: List<MarkerDoc>,
+    punchEnabled: Boolean,
+    punchIn: Long,
+    punchOut: Long,
     selectedClipId: Int?,
     recordingTrackId: Int?,
     zoom: Float,                       // pixels per second
@@ -76,6 +81,7 @@ fun TimelineView(
     val surfaceColor = MaterialTheme.colorScheme.surface
     val onSurface = MaterialTheme.colorScheme.onSurface
     val errorColor = MaterialTheme.colorScheme.error
+    val markerColor = MaterialTheme.colorScheme.tertiary
     val palette = listOf(colors.trackA, colors.trackB, colors.trackC, colors.trackD)
     val measurer = rememberTextMeasurer()
     val labelStyle = TextStyle(color = onSurface.copy(alpha = 0.7f), fontSize = 10.sp)
@@ -242,6 +248,24 @@ fun TimelineView(
                 drawLine(colors.playhead, Offset(lx, 0f), Offset(lx, h), strokeWidth = 1.dp.toPx())
                 drawLine(colors.playhead, Offset(rx, 0f), Offset(rx, h), strokeWidth = 1.dp.toPx())
             }
+        }
+
+        // ---- punch range (only this part of a take is written while recording)
+        if (punchEnabled && punchOut > punchIn) {
+            val px0 = punchIn / rate * zoom - scrollX
+            val px1 = punchOut / rate * zoom - scrollX
+            drawRect(errorColor.copy(alpha = 0.10f), topLeft = Offset(px0, rulerH), size = Size(px1 - px0, h - rulerH))
+            drawRect(errorColor.copy(alpha = 0.45f), topLeft = Offset(px0, 0f), size = Size(px1 - px0, rulerH * 0.35f))
+            drawLine(errorColor, Offset(px0, 0f), Offset(px0, h), strokeWidth = 1.5.dp.toPx())
+            drawLine(errorColor, Offset(px1, 0f), Offset(px1, h), strokeWidth = 1.5.dp.toPx())
+        }
+
+        // ---- markers
+        markers.forEach { m ->
+            val x = m.frame / rate * zoom - scrollX
+            if (x < -80f || x > w) return@forEach
+            drawLine(markerColor.copy(alpha = 0.8f), Offset(x, 0f), Offset(x, h), strokeWidth = 1.dp.toPx())
+            drawText(measurer, m.name, Offset(x + 3.dp.toPx(), rulerH * 0.45f), style = labelStyle.copy(color = markerColor), maxLines = 1)
         }
 
         // ---- track lanes

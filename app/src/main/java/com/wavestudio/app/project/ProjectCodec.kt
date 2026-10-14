@@ -35,6 +35,7 @@ object ProjectCodec {
         },
         "markers" to d.markers.map { linkedMapOf<String, Any?>("id" to it.id, "frame" to it.frame, "name" to it.name) },
         "loop" to linkedMapOf<String, Any?>("start" to d.loopStart, "end" to d.loopEnd, "enabled" to d.loopEnabled),
+        "punch" to linkedMapOf<String, Any?>("in" to d.punchIn, "out" to d.punchOut, "enabled" to d.punchEnabled),
         "metronome" to d.metronome,
         "countInBars" to d.countInBars,
         "nextId" to d.nextId,
@@ -78,6 +79,7 @@ object ProjectCodec {
             )
         }.filter { it.id > 0 && it.lengthFrames > 0 && it.media.isNotEmpty() }
         val loop = m["loop"].asObj()
+        val punch = m["punch"].asObj()
         val keptClips = clips   // clips whose track is missing are kept (not silently deleted); the engine just skips them
         val maxId = (tracks.map { it.id } + keptClips.map { it.id } +
             tracks.flatMap { t -> t.effects.map { it.id } } + m["masterEffects"].asList().map { it.asObj().int("id") } +
@@ -94,6 +96,8 @@ object ProjectCodec {
             clips = keptClips,
             markers = m["markers"].asList().map { it.asObj() }.map { MarkerDoc(it.int("id"), it.long("frame"), it.str("name")) },
             loopStart = loop.long("start"), loopEnd = loop.long("end"), loopEnabled = loop.bool("enabled"),
+            punchIn = punch.long("in").coerceAtLeast(0), punchOut = punch.long("out").coerceAtLeast(0),
+            punchEnabled = punch.bool("enabled") && punch.long("out") > punch.long("in"),
             metronome = m.bool("metronome"), countInBars = m.int("countInBars").coerceIn(0, 4),
             nextId = maxOf(m.int("nextId", 1), maxId + 1),
             created = m.long("created"), modified = m.long("modified")

@@ -50,6 +50,7 @@ fun HomeScreen(
     }
 
     var showNewDialog by remember { mutableStateOf(false) }
+    val actions = remember(vm) { ProjectCardActions(vm::renameProject, vm::duplicateProject, vm::deleteProject) }
 
     Scaffold(
         topBar = {
@@ -88,14 +89,14 @@ fun HomeScreen(
                         ToolsCard(onPlugins = onOpenPlugins, onSettings = onOpenSettings)
                     }
                     Column(modifier = Modifier.weight(2f).fillMaxHeight()) {
-                        RecentProjects(recent, onOpenProject, columns = 2)
+                        RecentProjects(recent, onOpenProject, columns = 2, actions = actions)
                     }
                 }
             } else {
                 Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     QuickActionsCard(onNew = { showNewDialog = true }, onOpen = onOpenProjects)
                     ToolsCard(onPlugins = onOpenPlugins, onSettings = onOpenSettings)
-                    RecentProjects(recent, onOpenProject, columns = columns)
+                    RecentProjects(recent, onOpenProject, columns = columns, actions = actions)
                 }
             }
         }
@@ -130,7 +131,7 @@ fun ToolsCard(onPlugins: () -> Unit, onSettings: () -> Unit) {
 }
 
 @Composable
-fun RecentProjects(projects: List<Project>, onOpen: (Long) -> Unit, columns: Int) {
+fun RecentProjects(projects: List<Project>, onOpen: (Long) -> Unit, columns: Int, actions: ProjectCardActions? = null) {
     SectionCard(title = "Recent Projects") {
         if (projects.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -148,7 +149,7 @@ fun RecentProjects(projects: List<Project>, onOpen: (Long) -> Unit, columns: Int
                 modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp)
             ) {
                 items(projects) { p ->
-                    ProjectCard(p, onClick = { onOpen(p.id) })
+                    ProjectCard(p, onClick = { onOpen(p.id) }, actions = actions)
                 }
             }
         }
@@ -157,7 +158,10 @@ fun RecentProjects(projects: List<Project>, onOpen: (Long) -> Unit, columns: Int
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProjectCard(p: Project, onClick: () -> Unit) {
+fun ProjectCard(p: Project, onClick: () -> Unit, actions: ProjectCardActions? = null) {
+    var menu by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
     ElevatedCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Box(
@@ -176,7 +180,17 @@ fun ProjectCard(p: Project, onClick: () -> Unit) {
                 Icon(Icons.Default.LibraryMusic, null, tint = Color.White, modifier = Modifier.size(40.dp))
             }
             Spacer(Modifier.height(8.dp))
-            Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f), maxLines = 1)
+                if (actions != null) Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Project actions") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
+                        DropdownMenuItem(text = { Text("Duplicate") }, onClick = { menu = false; actions.duplicate(p.id) })
+                        DropdownMenuItem(text = { Text("Delete…") }, onClick = { menu = false; deleting = true })
+                    }
+                }
+            }
             val secs = p.durationFrames / 48000L
             Text("Length ${secs / 60}:%02d".format(secs % 60),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -184,7 +198,30 @@ fun ProjectCard(p: Project, onClick: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+    if (renaming && actions != null) {
+        var text by remember { mutableStateOf(p.name) }
+        AlertDialog(
+            onDismissRequest = { renaming = false },
+            title = { Text("Rename project") },
+            text = { OutlinedTextField(value = text, onValueChange = { text = it }, singleLine = true) },
+            confirmButton = { TextButton(onClick = { actions.rename(p.id, text); renaming = false }, enabled = text.isNotBlank()) { Text("Rename") } },
+            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } }
+        )
+    }
+    if (deleting && actions != null) {
+        AlertDialog(
+            onDismissRequest = { deleting = false },
+            title = { Text("Delete “${p.name}”?") },
+            text = { Text("The project and all of its audio (imports and recordings) are removed from this device. This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { actions.delete(p.id); deleting = false }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleting = false }) { Text("Cancel") } }
+        )
+    }
 }
+
+/** What the project card's menu can do; each action keeps the project index and the project folder consistent. */
+data class ProjectCardActions(val rename: (Long, String) -> Unit, val duplicate: (Long) -> Unit, val delete: (Long) -> Unit)
+
 
 @Composable
 fun NewProjectDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {

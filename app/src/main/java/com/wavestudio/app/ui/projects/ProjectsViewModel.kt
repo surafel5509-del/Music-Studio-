@@ -9,11 +9,15 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.wavestudio.app.session.ProjectLibrary
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 @HiltViewModel
 class ProjectsViewModel @Inject constructor(
-    private val repo: ProjectRepository
+    private val repo: ProjectRepository,
+    private val library: ProjectLibrary
 ) : ViewModel() {
     val projects: StateFlow<List<Project>> = repo.observeAll()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -25,7 +29,15 @@ class ProjectsViewModel @Inject constructor(
         }
     }
 
+    private val _message = MutableStateFlow<String?>(null)
+    val message = _message.asStateFlow()
+    fun consumeMessage() { _message.value = null }
+
     fun deleteProject(id: Long) {
-        viewModelScope.launch { repo.delete(id) }
+        viewModelScope.launch { if (!library.delete(id)) _message.value = "Could not delete the project files" }
+    }
+    fun renameProject(id: Long, name: String) { viewModelScope.launch { library.rename(id, name) } }
+    fun duplicateProject(id: Long) {
+        viewModelScope.launch { if (library.duplicate(id) == null) _message.value = "Could not duplicate the project" }
     }
 }

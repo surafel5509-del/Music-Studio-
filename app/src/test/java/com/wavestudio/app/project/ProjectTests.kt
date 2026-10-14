@@ -46,7 +46,8 @@ class ProjectCodecTest {
         d = EditOps.addEffect(d, 0, "limiter").first
         val fx = d.tracks[0].effects[0].id
         d = EditOps.setEffectParam(d, fx, "b1_gain", 3.5f)
-        return d.copy(loopStart = 10, loopEnd = 99999, loopEnabled = true, metronome = true, countInBars = 2)
+        return d.copy(loopStart = 10, loopEnd = 99999, loopEnabled = true, metronome = true, countInBars = 2,
+            punchEnabled = true, punchIn = 1000, punchOut = 5000).let { EditOps.addMarker(it, 24000, "Verse").first }
     }
 
     @Test fun encodeDecodeIsLossless() {
@@ -342,6 +343,7 @@ class FakeEngine : EngineApi {
     override fun setLoop(start: Long, end: Long, enabled: Boolean) { calls += "loop $start $end $enabled" }
     override fun setMetronome(on: Boolean, bpm: Float, beats: Int) { calls += "metro $on $bpm $beats" }
     override fun setCountIn(bars: Int) { calls += "countIn $bars" }
+    override fun setPunch(enabled: Boolean, inFrame: Long, outFrame: Long) { calls += "punch $enabled $inFrame $outFrame" }
 }
 
 class EngineSyncTest {
@@ -429,5 +431,112 @@ class EngineSyncTest {
         val i = NativeEffectInfo.parse("""{"id":3,"trackId":0,"type":"gain","name":"Gain","bypass":false,"params":[{"id":"gain","name":"Gain","unit":"dB","min":-60,"max":24,"def":0,"value":1.5}]}""")!!
         assertEquals("gain", i.params[0].id); assertEquals(1.5f, i.params[0].value, 0f)
         assertNull(NativeEffectInfo.parse("{}")); assertNull(NativeEffectInfo.parse("not json"))
+    }
+}
+
+class MarkerPunchNormalizeTest {
+    @Test fun markersAreSortedNamedAndEditable() {
+        var d = ProjectDoc()
+        d = EditOps.addMarker(d, 96000, "Chorus").first
+        val (d1, id) = EditOps.addMarker(d, 48000)
+        d = d1
+        assertEquals(listOf(48000L, 96000L), d.markers.map { it.frame })
+        assertEquals("Marker 2", d.markers[0].name)
+        d = EditOps.moveMarker(d, id, 200000)
+        assertEquals(id, d.markers.last().id)               // re-sorted
+        d = EditOps.renameMarker(d, id, "  Bridge  ")
+        assertEquals("Bridge", d.markers.last().name)
+        assertSame(d, EditOps.renameMarker(d, id, "   "))    // blank names rejected
+        assertSame(d, EditOps.addMarker(d, -5).first)
+        d = EditOps.removeMarker(d, id)
+        assertEquals(1, d.markers.size)
+        assertSame(d, EditOps.removeMarker(d, 12345))
+    }
+
+    @Test fun markerNavigationAdvancesAndDoesNotStick() {
+        var d = ProjectDoc()
+        for (f in listOf(48000L, 96000L, 192000L)) d = EditOps.addMarker(d, f).first
+        assertEquals(48000L, EditOps.nextMarker(d, 0)!!.frame)
+        assertEquals(96000L, EditOps.nextMarker(d, 48000)!!.frame)      // standing on a marker: go to the following one
+        assertNull(EditOps.nextMarker(d, 192000))
+        assertEquals(96000L, EditOps.prevMarker(d, 192000)!!.frame)
+        assertEquals(48000L, EditOps.prevMarker(d, 96000 + 100)!!.frame) // just after a marker: skip back past it
+        assertNull(EditOps.prevMarker(d, 48000))
+    }
+
+    @Test fun punchRangeValidation() {
+        val d = ProjectDoc()
+        assertSame(d, EditOps.setPunchEnabled(d, true))                  // no range yet
+        assertSame(d, EditOps.setPunchRange(d, 5000, 5000))
+        assertSame(d, EditOps.setPunchRange(d, 9000, 1000))
+        assertSame(d, EditOps.setPunchRange(d, -1, 1000))
+        val d2 = EditOps.setPunchEnabled(EditOps.setPunchRange(d, 1000, 9000), true)
+        assertTrue(d2.punchEnabled); assertEquals(9000L, d2.punchOut)
+        assertSame(d2, EditOps.setPunchRange(d2, 1000, 9000))
+    }
+
+    @Test fun punchAndMarkersSyncAndPersist() {
+        val e = FakeEngine(); val s = EngineSync(e) { it }
+        var d = EditOps.setPunchRange(ProjectDoc(), 1000, 9000)
+        s.sync(d); e.calls.clear()
+        d = EditOps.setPunchEnabled(d, true)
+        s.sync(d)
+        assertEquals(listOf("punch true 1000 9000"), e.calls)
+        val back = ProjectCodec.decode(ProjectCodec.encode(d))
+        assertTrue(back.punchEnabled); assertEquals(1000L, back.punchIn)
+        // an enabled flag without a valid range in a file is ignored
+        assertFalse(ProjectCodec.decode("""{"punch":{"in":500,"out":100,"enabled":true}}""").punchEnabled)
+    }
+
+    @Test fun normalizeGain() {
+        assertEquals(6.0206f - 1f, EditOps.normalizeGainDb(0.5f, -1f)!!, 0.001f)
+        assertEquals(0f, EditOps.normalizeGainDb(1f, 0f)!!, 0.001f)
+        assertEquals(-6.0206f - 0f, EditOps.normalizeGainDb(2f, 0f)!!, 0.001f)
+        assertNull(EditOps.normalizeGainDb(0f))
+        assertEquals(24f, EditOps.normalizeGainDb(0.0001f)!!, 0f)       // clamped to the clip gain range
+    }
+}
+
+class ProjectFilesTest {
+    private fun tmp(): File = Files.createTempDirectory("wsproj").toFile()
+
+    private fun makeProject(root: File): File {
+        val p = File(root, "1"); File(p, "media").mkdirs(); File(p, "recordings").mkdirs()
+        File(p, "project.json").writeText("{\"name\":\"A\"}")
+        File(p, "project.json.tmp").writeText("partial")
+        File(p, "media/a.wav").writeBytes(ByteArray(1000) { it.toByte() })
+        File(p, "recordings/t.wav").writeBytes(ByteArray(500))
+        File(p, "recordings/t.wav.take.json").writeText("{}")
+        return p
+    }
+
+    @Test fun duplicateCopiesAudioAndSkipsTemporaryFiles() {
+        val root = tmp(); val src = makeProject(root); val dst = File(root, "2")
+        ProjectFiles.duplicateProject(src, dst)
+        assertEquals("{\"name\":\"A\"}", File(dst, "project.json").readText())
+        assertEquals(1000L, File(dst, "media/a.wav").length())
+        assertEquals(500L, File(dst, "recordings/t.wav").length())
+        assertFalse(File(dst, "project.json.tmp").exists())
+        assertFalse(File(dst, "recordings/t.wav.take.json").exists())
+        // the copy is independent: editing the duplicate's document does not touch the original
+        File(dst, "project.json").writeText("changed")
+        assertEquals("{\"name\":\"A\"}", File(src, "project.json").readText())
+        root.deleteRecursively()
+    }
+
+    @Test fun duplicateRefusesExistingDestinationAndMissingSource() {
+        val root = tmp(); val src = makeProject(root)
+        try { ProjectFiles.duplicateProject(src, File(root, "1")); fail() } catch (_: java.io.IOException) {}
+        try { ProjectFiles.duplicateProject(File(root, "nope"), File(root, "3")); fail() } catch (_: java.io.IOException) {}
+        assertTrue(src.exists())          // the original is never touched on failure
+        root.deleteRecursively()
+    }
+
+    @Test fun deleteRemovesEverythingAndToleratesMissing() {
+        val root = tmp(); val src = makeProject(root)
+        assertTrue(ProjectFiles.sizeOf(src) > 1500)
+        assertTrue(ProjectFiles.deleteProject(src)); assertFalse(src.exists())
+        assertTrue(ProjectFiles.deleteProject(src))
+        root.deleteRecursively()
     }
 }

@@ -128,6 +128,50 @@ object EditOps {
     fun setEffectBypass(d: ProjectDoc, effectId: Int, bypass: Boolean): ProjectDoc =
         mapEffect(d, effectId) { it.copy(bypass = bypass) }
 
+    // ------------------------------------------------------------------ markers
+    fun addMarker(d: ProjectDoc, frame: Long, name: String? = null): Pair<ProjectDoc, Int> {
+        if (frame < 0) return d to -1
+        val id = d.nextId
+        val n = name?.trim()?.takeIf { it.isNotEmpty() }?.take(40) ?: "Marker ${d.markers.size + 1}"
+        return d.copy(markers = (d.markers + MarkerDoc(id, frame, n)).sortedBy { it.frame }, nextId = id + 1) to id
+    }
+    fun removeMarker(d: ProjectDoc, id: Int): ProjectDoc =
+        if (d.markers.none { it.id == id }) d else d.copy(markers = d.markers.filter { it.id != id })
+    fun renameMarker(d: ProjectDoc, id: Int, name: String): ProjectDoc {
+        val n = name.trim().take(40)
+        if (n.isEmpty() || d.markers.none { it.id == id && it.name != n }) return d
+        return d.copy(markers = d.markers.map { if (it.id == id) it.copy(name = n) else it })
+    }
+    fun moveMarker(d: ProjectDoc, id: Int, frame: Long): ProjectDoc {
+        if (frame < 0 || d.markers.none { it.id == id && it.frame != frame }) return d
+        return d.copy(markers = d.markers.map { if (it.id == id) it.copy(frame = frame) else it }.sortedBy { it.frame })
+    }
+    /** First marker strictly after [frame] (with a small tolerance so repeated "next" always advances). */
+    fun nextMarker(d: ProjectDoc, frame: Long, tolerance: Long = 480): MarkerDoc? =
+        d.markers.filter { it.frame > frame + tolerance }.minByOrNull { it.frame }
+    /** Last marker before [frame]; the tolerance keeps "previous" from sticking to the marker the playhead is already on. */
+    fun prevMarker(d: ProjectDoc, frame: Long, tolerance: Long = TIMELINE_RATE / 4L): MarkerDoc? =
+        d.markers.filter { it.frame < frame - tolerance }.maxByOrNull { it.frame }
+
+    // ------------------------------------------------------------------ punch in/out
+    /** Sets the punch range. An empty or inverted range is rejected (the document is returned unchanged). */
+    fun setPunchRange(d: ProjectDoc, inFrame: Long, outFrame: Long): ProjectDoc {
+        if (inFrame < 0 || outFrame - inFrame < MIN_CLIP) return d
+        if (d.punchIn == inFrame && d.punchOut == outFrame) return d
+        return d.copy(punchIn = inFrame, punchOut = outFrame)
+    }
+    fun setPunchEnabled(d: ProjectDoc, enabled: Boolean): ProjectDoc {
+        if (enabled && d.punchOut - d.punchIn < MIN_CLIP) return d      // no valid range yet
+        return if (d.punchEnabled == enabled) d else d.copy(punchEnabled = enabled)
+    }
+
+    // ------------------------------------------------------------------ normalize
+    /** Gain (dB) that brings a clip whose unity-gain peak is [peakLinear] to [targetDb] dBFS, or null for silence. */
+    fun normalizeGainDb(peakLinear: Float, targetDb: Float = -1f): Float? {
+        if (!(peakLinear > 1e-5f)) return null
+        return (targetDb - 20f * Math.log10(peakLinear.toDouble()).toFloat()).coerceIn(-60f, 24f)
+    }
+
     // ------------------------------------------------------------------ grid / snapping
     fun snap(frame: Long, gridFrames: Double, enabled: Boolean = true): Long =
         if (!enabled || gridFrames < 1.0) frame else (Math.round(frame / gridFrames) * gridFrames).toLong()

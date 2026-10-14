@@ -7,11 +7,13 @@ import com.wavestudio.app.domain.Project
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import com.wavestudio.app.session.ProjectLibrary
 import javax.inject.Inject
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
-    private val repo: ProjectRepository
+    private val repo: ProjectRepository,
+    private val library: ProjectLibrary
 ) : ViewModel() {
 
     val recentProjects: StateFlow<List<Project>> = repo.observeAll()
@@ -24,7 +26,7 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun deleteProject(id: Long) {
-        viewModelScope.launch { repo.delete(id) }
-    }
+    fun deleteProject(id: Long) { viewModelScope.launch { library.delete(id) } }
+    fun renameProject(id: Long, name: String) { viewModelScope.launch { library.rename(id, name) } }
+    fun duplicateProject(id: Long) { viewModelScope.launch { library.duplicate(id) } }
 }

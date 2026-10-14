@@ -36,6 +36,7 @@ interface EngineApi {
     fun setLoop(start: Long, end: Long, enabled: Boolean)
     fun setMetronome(on: Boolean, bpm: Float, beats: Int)
     fun setCountIn(bars: Int)
+    fun setPunch(enabled: Boolean, inFrame: Long, outFrame: Long)
 }
 
 /**
@@ -82,6 +83,8 @@ class EngineSync(private val api: EngineApi, private val mediaPath: (String) -> 
         if (initial || old.metronome != doc.metronome || old.bpm != doc.bpm || old.beatsPerBar != doc.beatsPerBar || initial)
             api.setMetronome(doc.metronome, doc.bpm, doc.beatsPerBar)
         if (initial || old.countInBars != doc.countInBars) api.setCountIn(doc.countInBars)
+        if (initial || old.punchEnabled != doc.punchEnabled || old.punchIn != doc.punchIn || old.punchOut != doc.punchOut)
+            api.setPunch(doc.punchEnabled, doc.punchIn, doc.punchOut)
 
         // tracks removed
         val newTrackIds = doc.tracks.map { it.id }.toSet()
