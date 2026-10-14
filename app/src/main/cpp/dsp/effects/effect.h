@@ -6,6 +6,9 @@
 
 namespace wavestudio {
 
+inline float db_to_linear(float db) { return powf(10.f, db / 20.f); }
+inline float linear_to_db(float lin) { return 20.f * log10f(fmaxf(lin, 1e-10f)); }
+
 class Effect {
 public:
     virtual ~Effect() = default;
