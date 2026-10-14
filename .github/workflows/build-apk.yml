@@ -99,26 +99,27 @@ jobs:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
 
-      - name: Locate APK
-        id: apk
+      - name: Prepare APK artifact
         run: |
           set +e
-          echo "=== APKs ==="
+          echo "=== Searching for APKs ==="
           find app/build -name "*.apk" -type f || true
+          mkdir -p apk-out
           APK=$(find app/build -name "*.apk" -type f | head -1)
           if [ -z "$APK" ]; then
-            if [ -f app/build/outputs/apk/release/app-release.apk ]; then APK=app/build/outputs/apk/release/app-release.apk
-            else APK=app/build/outputs/apk/debug/app-debug.apk; fi
+            echo "No APK found! Listing outputs:"
+            find app/build/outputs -type f || true
+            ls -R app/build/outputs/apk 2>&1 || true
+            exit 1
           fi
-          echo "Using APK=$APK"
-          echo "path=$APK" >> $GITHUB_OUTPUT
-          echo "name=$(basename $APK)" >> $GITHUB_OUTPUT
+          cp "$APK" apk-out/WaveStudio-debug.apk
+          ls -la apk-out/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: wavestudio-apk
-          path: app/build/outputs/**/*.apk
+          path: apk-out/WaveStudio-debug.apk
           retention-days: 90
 
       - name: Create GitHub Release (on tags)
