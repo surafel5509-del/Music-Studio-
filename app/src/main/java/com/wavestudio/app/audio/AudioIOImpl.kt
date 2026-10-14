@@ -33,43 +33,45 @@ class AudioIOImpl @Inject constructor(
         loadAudio(tmp.absolutePath)
     } catch (t: Throwable) { t.printStackTrace(); null }
 
-    override suspend fun loadAudio(path: String): LoadedAudio? = try {
-        val f = File(path)
-        if (!f.exists()) return null
-        // Use MediaExtractor (offline) for decoding
-        val extractor = MediaExtractor()
-        extractor.setDataSource(path)
-        var trackIdx = -1
-        var fmt: MediaFormat? = null
-        for (i in 0 until extractor.trackCount) {
-            val f = extractor.getTrackFormat(i)
-            val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
-            if (mime.startsWith("audio/")) { trackIdx = i; fmt = f; break; }
-        }
-        if (trackIdx < 0 || fmt == null) { extractor.release(); return null }
-        extractor.selectTrack(trackIdx)
+    override suspend fun loadAudio(path: String): LoadedAudio? {
+        return try {
+            val f = File(path)
+            if (!f.exists()) return null
+            // Use MediaExtractor (offline) for decoding
+            val extractor = MediaExtractor()
+            extractor.setDataSource(path)
+            var trackIdx = -1
+            var fmt: MediaFormat? = null
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("audio/")) { trackIdx = i; fmt = f; break; }
+            }
+            if (trackIdx < 0 || fmt == null) { extractor.release(); return null }
+            extractor.selectTrack(trackIdx)
 
-        val sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        val channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-        val durationUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION) else -1L
-        val durationMs = if (durationUs > 0) durationUs / 1000L else 0L
-        val frames = if (durationUs > 0) (durationUs * sampleRate / 1_000_000L) else 0L
+            val sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            val channels = fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            val durationUs = if (fmt.containsKey(MediaFormat.KEY_DURATION)) fmt.getLong(MediaFormat.KEY_DURATION) else -1L
+            val durationMs = if (durationUs > 0) durationUs / 1000L else 0L
+            val frames = if (durationUs > 0) (durationUs * sampleRate / 1_000_000L) else 0L
 
-        // For very large files, do not load all PCM into memory — keep file reference;
-        // engine will stream it. For small files (< ~50 MB) decode fully so editor can
-        // preview immediately.
-        val maxInMemFrames = (sampleRate * 60 * 5).toLong() // 5 minutes max in RAM
-        val floatData: FloatArray? = if (f.length() < 50L * 1024 * 1024 && frames in 1..maxInMemFrames) {
-            decodeToFloat(extractor, fmt, channels, frames.toInt())
-        } else null
-        extractor.release()
+            // For very large files, do not load all PCM into memory — keep file reference;
+            // engine will stream it. For small files (< ~50 MB) decode fully so editor can
+            // preview immediately.
+            val maxInMemFrames = (sampleRate * 60 * 5).toLong() // 5 minutes max in RAM
+            val floatData: FloatArray? = if (f.length() < 50L * 1024 * 1024 && frames in 1..maxInMemFrames) {
+                decodeToFloat(extractor, fmt, channels, frames.toInt())
+            } else null
+            extractor.release()
 
-        LoadedAudio(
-            path = path, sampleRate = sampleRate, channels = channels,
-            frames = if (floatData != null) (floatData.size / channels).toLong() else frames,
-            bitDepth = 24, durationMs = durationMs, floatData = floatData
-        )
-    } catch (t: Throwable) { t.printStackTrace(); null }
+            LoadedAudio(
+                path = path, sampleRate = sampleRate, channels = channels,
+                frames = if (floatData != null) (floatData.size / channels).toLong() else frames,
+                bitDepth = 24, durationMs = durationMs, floatData = floatData
+            )
+        } catch (t: Throwable) { t.printStackTrace(); null }
+    }
 
     private fun decodeToFloat(extractor: MediaExtractor, fmt: MediaFormat, channels: Int, maxFrames: Int): FloatArray? {
         val mime = fmt.getString(MediaFormat.KEY_MIME) ?: return null
