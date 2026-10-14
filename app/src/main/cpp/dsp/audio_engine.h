@@ -7,18 +7,13 @@
 #include <memory>
 #include <functional>
 #include "buffer.h"
+#include "clip.h"
+#include "mixer.h"
 #include "effects/effect_chain.h"
 #include "analysis/spectrum.h"
 #include "analysis/lufs.h"
 #include <aaudio/AAudio.h>
 #include <SLES/OpenSLES.h>
-
-namespace wavestudio {
-class Mixer;
-
-
-// AAudioStream and aaudio_data_callback_result_t are defined in <aaudio/AAudio.h>
-typedef struct AAudioStreamStruct AAudioStream;
 
 namespace wavestudio {
 
@@ -27,28 +22,12 @@ enum class EngineState { Stopped, Playing, Recording, Paused };
 struct TrackConfig {
     int id = 0;
     std::string name;
-    float volume = 1.0f;   // linear
-    float pan = 0.0f;      // -1..1
+    float volume = 1.0f;
+    float pan = 0.0f;
     bool mute = false;
     bool solo = false;
     bool arm = false;
     int input_channel = 0;
-};
-
-// Clip is an immutable reference to an AudioBuffer + non-destructive edits
-struct Clip {
-    int id = 0;
-    int track_id = 0;
-    std::shared_ptr<AudioBuffer> buffer;
-    int64_t start_frame = 0;     // position on timeline
-    int64_t offset_frame = 0;    // offset inside buffer
-    int64_t length_frames = 0;   // visible length
-    float gain_db = 0.f;
-    float fade_in_ms = 0.f;
-    float fade_out_ms = 0.f;
-    bool reversed = false;
-    float pitch_semitones = 0.f;
-    float stretch_ratio = 1.f;   // 1.0 = no change
 };
 
 class AudioEngine {

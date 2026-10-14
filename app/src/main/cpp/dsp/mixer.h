@@ -1,12 +1,13 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include <memory>
 #include "buffer.h"
+#include "clip.h"
 
 namespace wavestudio {
 
 class EffectChain;
-struct Clip;
 
 struct MixerTrack {
     float gain_l = 1.f, gain_r = 1.f;
