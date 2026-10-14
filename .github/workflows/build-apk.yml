@@ -133,10 +133,19 @@ jobs:
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
 
       - name: Check build result
+        id: check
         run: |
-          if [ -f build-debug.log ] && grep -q "BUILD SUCCESSFUL" build-debug.log; then exit 0; fi
-          if [ -f build-release.log ] && grep -q "BUILD SUCCESSFUL" build-release.log; then exit 0; fi
-          echo "Build failed."; exit 1
+          if [ -f build-debug.log ] && grep -q "BUILD SUCCESSFUL" build-debug.log; then echo "status=success" >> $GITHUB_OUTPUT; exit 0; fi
+          if [ -f build-release.log ] && grep -q "BUILD SUCCESSFUL" build-release.log; then echo "status=success" >> $GITHUB_OUTPUT; exit 0; fi
+          echo "status=failure" >> $GITHUB_OUTPUT
+          echo "Build failed. Extracting relevant errors:"
+          if [ -f build-debug.log ]; then
+            grep -nE "^e: |^w: |error:|FAILED|FAILURE:|CMake Error|C/C\+\+:|undefined reference|Exception|cxx:|BUILD FAILED" build-debug.log | tail -200
+          fi
+          if [ -f build-release.log ]; then
+            grep -nE "^e: |^w: |error:|FAILED|FAILURE:|CMake Error|C/C\+\+:|undefined reference|Exception|cxx:|BUILD FAILED" build-release.log | tail -200
+          fi
+          exit 1
 
       - name: Upload build log always
         if: always()
