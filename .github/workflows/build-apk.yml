@@ -113,28 +113,39 @@ jobs:
 
       - name: Build debug APK
         if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
+        id: build_debug
         run: |
-          ./gradlew assembleDebug --stacktrace --info 2>&1 | tee build-debug.log
-        continue-on-error: false
+          set +e
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee build-debug.log
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        shell: bash
 
       - name: Build release APK
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
+        id: build_release
         run: |
-          ./gradlew assembleRelease --stacktrace --info 2>&1 | tee build-release.log
-        continue-on-error: false
+          set +e
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee build-release.log
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+        shell: bash
         env:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
 
-      - name: Upload build log on failure
-        if: failure()
+      - name: Check build result
+        run: |
+          if [ -f build-debug.log ] && grep -q "BUILD SUCCESSFUL" build-debug.log; then exit 0; fi
+          if [ -f build-release.log ] && grep -q "BUILD SUCCESSFUL" build-release.log; then exit 0; fi
+          echo "Build failed."; exit 1
+
+      - name: Upload build log always
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: |
-            build-*.log
-            app/build/intermediates/cxx/**
+          path: build-*.log
           retention-days: 14
+          if-no-files-found: ignore
 
       - name: Collect APK path
         id: apk
