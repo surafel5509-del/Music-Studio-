@@ -18,7 +18,7 @@ jobs:
   build:
     name: Build WaveStudio APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -36,7 +36,6 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-            ~/.android/build-cache
           key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
           restore-keys: |
             gradle-${{ runner.os }}-
@@ -51,17 +50,48 @@ jobs:
           gradle wrapper --gradle-version 8.4 --distribution-type bin
           chmod +x gradlew
 
-      - name: Install Android SDK & accept licenses
-        uses: android-actions/setup-android@v3
-        with:
-          # Default packages from the action include platform-tools, build-tools, etc.
-          # We add the NDK version and CMake specified by the project.
-          packages: |
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;25.2.9519653
-            cmake;3.22.1
-            platform-tools
+      - name: Locate preinstalled Android SDK
+        id: sdk
+        run: |
+          # ubuntu-latest ships an Android SDK at $ANDROID_SDK_ROOT / $ANDROID_HOME
+          if [ -n "$ANDROID_SDK_ROOT" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK="$ANDROID_SDK_ROOT"
+          elif [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
+          elif [ -d "/usr/local/lib/android/sdk" ]; then
+            SDK="/usr/local/lib/android/sdk"
+          else
+            echo "No Android SDK found; installing command-line tools"
+            SDK=$HOME/android-sdk
+            mkdir -p "$SDK/cmdline-tools"
+            wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdtools.zip
+            unzip -q /tmp/cmdtools.zip -d "$SDK/cmdline-tools"
+            mv "$SDK/cmdline-tools/cmdline-tools" "$SDK/cmdline-tools/latest"
+          fi
+          echo "sdk=$SDK" >> $GITHUB_OUTPUT
+          echo "ANDROID_SDK_ROOT=$SDK" >> $GITHUB_ENV
+          echo "ANDROID_HOME=$SDK" >> $GITHUB_ENV
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+
+      - name: Install required Android SDK components
+        run: |
+          SDK="$ANDROID_SDK_ROOT"
+          SDKMANAGER="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            # Try other common paths used by preinstalled runner images
+            for p in "$SDK/cmdline-tools/bin/sdkmanager" \
+                     "$SDK/tools/bin/sdkmanager"; do
+              if [ -x "$p" ]; then SDKMANAGER="$p"; break; fi
+            done
+          fi
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;25.2.9519653" \
+            "cmake;3.22.1"
 
       - name: Create keystore for release build
         if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
@@ -70,17 +100,16 @@ jobs:
             -keystore app/release.keystore \
             -alias wavestudio \
             -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass "${{ secrets.WS_STORE_PASS }}" \
-            -keypass "${{ secrets.WS_KEY_PASS }}" \
+            -storepass "${WS_STORE_PASS:-wavestudio}" \
+            -keypass "${WS_KEY_PASS:-wavestudio}" \
             -dname "CN=WaveStudio, O=WaveStudio, L=Mobile, ST=CA, C=US"
         env:
-          WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
-          WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
+          WS_STORE_PASS: ${{ secrets.WS_STORE_PASS }}
+          WS_KEY_PASS: ${{ secrets.WS_KEY_PASS }}
 
-      - name: Write local properties
+      - name: Write local.properties
         run: |
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-          echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8" >> gradle.properties
 
       - name: Build debug APK
         if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
@@ -93,13 +122,6 @@ jobs:
           WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
           WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
 
-      - name: Sign debug APK (always signed, ready to install)
-        if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
-        run: |
-          # The debug build already produces a signed APK via the default debug signing config.
-          # We just verify and collect it.
-          ls -la app/build/outputs/apk/debug/
-
       - name: Collect APK path
         id: apk
         run: |
@@ -111,6 +133,8 @@ jobs:
             echo "name=WaveStudio-debug.apk" >> $GITHUB_OUTPUT
           fi
           ls -la app/build/outputs/apk/
+          ls -la app/build/outputs/apk/debug/ 2>/dev/null || true
+          ls -la app/build/outputs/apk/release/ 2>/dev/null || true
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
