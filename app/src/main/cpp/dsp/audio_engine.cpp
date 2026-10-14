@@ -2,12 +2,21 @@
 #include <android/log.h>
 #include <algorithm>
 #include <chrono>
+#include <dlfcn.h>
 
 #define LOG_TAG "WaveStudioEngine"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 namespace wavestudio {
+
+namespace {
+/** Resolve an AAudio entry point that is newer than minSdk at run time (nullptr when the device does not have it). */
+template <class Fn> Fn aaudio_sym(const char* name) {
+    static void* lib = dlopen("libaaudio.so", RTLD_NOW);
+    return lib ? reinterpret_cast<Fn>(dlsym(lib, name)) : nullptr;
+}
+} // namespace
 
 AudioDevice& AudioDevice::instance() {
     static AudioDevice* inst = new AudioDevice();   // intentionally leaked: callbacks may outlive static destruction
@@ -129,10 +138,9 @@ bool AudioDevice::open_output(int rate) {
     AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
     AAudioStreamBuilder_setChannelCount(b, 2);
     // Usage / content type are API 28+; minSdk is 26, so guard them at run time.
-    if (__builtin_available(android 28, *)) {
-        AAudioStreamBuilder_setUsage(b, AAUDIO_USAGE_MEDIA);
-        AAudioStreamBuilder_setContentType(b, AAUDIO_CONTENT_TYPE_MUSIC);
-    }
+    // The NDK headers mark these "introduced in 28" and reject direct calls at minSdk 26, so resolve them with dlsym.
+    if (auto f = aaudio_sym<void (*)(AAudioStreamBuilder*, int32_t)>("AAudioStreamBuilder_setUsage")) f(b, AAUDIO_USAGE_MEDIA);
+    if (auto f = aaudio_sym<void (*)(AAudioStreamBuilder*, int32_t)>("AAudioStreamBuilder_setContentType")) f(b, AAUDIO_CONTENT_TYPE_MUSIC);
     if (rate > 0) AAudioStreamBuilder_setSampleRate(b, rate);
     AAudioStreamBuilder_setDataCallback(b, &AudioDevice::out_cb, this);
     AAudioStreamBuilder_setErrorCallback(b, &AudioDevice::err_cb, this);
@@ -158,9 +166,11 @@ bool AudioDevice::open_input(int rate) {
     AAudioStreamBuilder_setPerformanceMode(b, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(b, AAUDIO_SHARING_MODE_SHARED);
     AAudioStreamBuilder_setFormat(b, AAUDIO_FORMAT_PCM_FLOAT);
+    using SetPresetFn = void (*)(AAudioStreamBuilder*, int32_t);
+    SetPresetFn set_preset = aaudio_sym<SetPresetFn>("AAudioStreamBuilder_setInputPreset");   // API 28+
     bool preset_set = false;
-    if (__builtin_available(android 28, *)) {
-        AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_UNPROCESSED);   // no AGC / noise suppression on a music recording
+    if (set_preset) {
+        set_preset(b, AAUDIO_INPUT_PRESET_UNPROCESSED);   // no AGC / noise suppression on a music recording
         preset_set = true;
     }
     if (rate > 0) AAudioStreamBuilder_setSampleRate(b, rate);
@@ -169,7 +179,7 @@ bool AudioDevice::open_input(int rate) {
     aaudio_result_t r = AAudioStreamBuilder_openStream(b, &in_);
     if (r != AAUDIO_OK && preset_set) {
         // Some devices reject UNPROCESSED: retry with the generic preset.
-        if (__builtin_available(android 28, *)) AAudioStreamBuilder_setInputPreset(b, AAUDIO_INPUT_PRESET_GENERIC);
+        if (set_preset) set_preset(b, AAUDIO_INPUT_PRESET_GENERIC);
         r = AAudioStreamBuilder_openStream(b, &in_);
     }
     AAudioStreamBuilder_delete(b);
