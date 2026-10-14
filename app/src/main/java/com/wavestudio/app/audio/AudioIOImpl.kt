@@ -35,7 +35,7 @@ class AudioIOImpl @Inject constructor(
 
     override suspend fun loadAudio(path: String): LoadedAudio? = try {
         val f = File(path)
-        if (!f.exists()) return null
+        if (!f.exists()) return@try null
         // Use MediaExtractor (offline) for decoding
         val extractor = MediaExtractor()
         extractor.setDataSource(path)
@@ -46,7 +46,7 @@ class AudioIOImpl @Inject constructor(
             val mime = f.getString(MediaFormat.KEY_MIME) ?: continue
             if (mime.startsWith("audio/")) { trackIdx = i; fmt = f; break; }
         }
-        if (trackIdx < 0 || fmt == null) { extractor.release(); return null }
+        if (trackIdx < 0 || fmt == null) { extractor.release(); return@try null }
         extractor.selectTrack(trackIdx)
 
         val sampleRate = fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE)
