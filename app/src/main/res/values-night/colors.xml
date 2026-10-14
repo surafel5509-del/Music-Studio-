@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ws_background">#0D1117</color>
+    <color name="ws_surface">#161B22</color>
+    <color name="ws_on_background">#E6EDF3</color>
+</resources>

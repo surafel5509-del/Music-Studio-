@@ -1,0 +1,129 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master, arena/** ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      buildType:
+        description: 'Build type'
+        required: false
+        default: 'debug'
+        type: choice
+        options: [debug, release]
+
+jobs:
+  build:
+    name: Build WaveStudio APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.android/build-cache
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.4'
+
+      - name: Generate Gradle Wrapper
+        run: |
+          gradle wrapper --gradle-version 8.4 --distribution-type bin
+          chmod +x gradlew
+
+      - name: Install Android SDK & accept licenses
+        uses: android-actions/setup-android@v3
+        with:
+          # Default packages from the action include platform-tools, build-tools, etc.
+          # We add the NDK version and CMake specified by the project.
+          packages: |
+            platforms;android-34
+            build-tools;34.0.0
+            ndk;25.2.9519653
+            cmake;3.22.1
+            platform-tools
+
+      - name: Create keystore for release build
+        if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
+        run: |
+          keytool -genkeypair -v \
+            -keystore app/release.keystore \
+            -alias wavestudio \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass "${{ secrets.WS_STORE_PASS }}" \
+            -keypass "${{ secrets.WS_KEY_PASS }}" \
+            -dname "CN=WaveStudio, O=WaveStudio, L=Mobile, ST=CA, C=US"
+        env:
+          WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
+          WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
+
+      - name: Write local properties
+        run: |
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8" >> gradle.properties
+
+      - name: Build debug APK
+        if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build release APK
+        if: github.event.inputs.buildType == 'release' || startsWith(github.ref, 'refs/tags/')
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          WS_STORE_PASS: ${{ secrets.WS_STORE_PASS || 'wavestudio' }}
+          WS_KEY_PASS: ${{ secrets.WS_KEY_PASS || 'wavestudio' }}
+
+      - name: Sign debug APK (always signed, ready to install)
+        if: github.event.inputs.buildType != 'release' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          # The debug build already produces a signed APK via the default debug signing config.
+          # We just verify and collect it.
+          ls -la app/build/outputs/apk/debug/
+
+      - name: Collect APK path
+        id: apk
+        run: |
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            echo "path=app/build/outputs/apk/release/app-release.apk" >> $GITHUB_OUTPUT
+            echo "name=WaveStudio-release.apk" >> $GITHUB_OUTPUT
+          else
+            echo "path=app/build/outputs/apk/debug/app-debug.apk" >> $GITHUB_OUTPUT
+            echo "name=WaveStudio-debug.apk" >> $GITHUB_OUTPUT
+          fi
+          ls -la app/build/outputs/apk/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wavestudio-apk
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 90
+
+      - name: Create GitHub Release (on tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.path }}
+          name: WaveStudio ${{ github.ref_name }}
+          draft: false
+          prerelease: false

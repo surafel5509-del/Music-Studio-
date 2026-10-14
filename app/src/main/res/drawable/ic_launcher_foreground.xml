@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Stylized waveform + wave triangle -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,20 L70,54 L58,54 L58,84 L50,84 L50,54 L38,54 Z" />
+    <path android:fillColor="#43E97B"
+        android:pathData="M30,64 Q36,50 42,64 T54,64 T66,64 T78,64" android:strokeWidth="3" android:strokeColor="#43E97B" android:fillColor="#00000000" />
+</vector>

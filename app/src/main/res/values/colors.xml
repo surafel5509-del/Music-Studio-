@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ws_primary">#5DA9FF</color>
+    <color name="ws_primary_dark">#005DCC</color>
+    <color name="ws_accent">#43E97B</color>
+    <color name="ws_background">#0D1117</color>
+    <color name="ws_surface">#161B22</color>
+    <color name="ws_error">#FF6B6B</color>
+    <color name="ws_on_primary">#001A33</color>
+    <color name="ws_on_background">#E6EDF3</color>
+</resources>
