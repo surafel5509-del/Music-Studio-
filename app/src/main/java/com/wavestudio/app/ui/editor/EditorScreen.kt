@@ -35,6 +35,7 @@ import com.wavestudio.app.engine.AudioEngineController
 import com.wavestudio.app.ui.common.*
 import com.wavestudio.app.ui.components.SpectrumAnalyzerView
 import com.wavestudio.app.ui.mixer.MixerPanel
+import com.wavestudio.app.ui.theme.WaveStudioTheme
 import com.wavestudio.app.ui.timeline.TimelineView
 import kotlinx.coroutines.flow.combine
 import kotlin.math.max
