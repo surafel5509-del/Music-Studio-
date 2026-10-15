@@ -16,6 +16,10 @@ import androidx.compose.ui.graphics.Color
 import android.view.WindowManager
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import com.wavestudio.app.project.ThemeMode
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -60,6 +64,12 @@ class MainActivity : ComponentActivity() {
         // Input trim / low-cut / DC removal follow the settings (re-applied by the controller after device restarts).
         lifecycleScope.launch {
             settings.data.collect { engine.setInputConditioning(it.inputGainDb, it.inputLowCutHz.toFloat(), it.removeDc) }
+        }
+
+        lifecycleScope.launch {
+            settings.data.map { it.inputDeviceId }.distinctUntilChanged().collect { id ->
+                withContext(Dispatchers.Default) { engine.setInputDevice(id) }
+            }
         }
 
         setContent {

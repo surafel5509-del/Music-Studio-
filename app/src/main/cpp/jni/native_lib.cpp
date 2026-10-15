@@ -58,6 +58,12 @@ JNI(void, nativeStop) { AudioDevice::instance().stop(); }
 JNI(jboolean, nativeEnableInput, jboolean on) {
     try { return AudioDevice::instance().enable_input(on); } catch (...) { return false; }
 }
+JNI(jboolean, nativeSetInputDevice, jint id) {
+    try {
+        if (C()->is_recording()) return false;           // never switch microphones in the middle of a take
+        return AudioDevice::instance().set_input_device(id);
+    } catch (...) { return false; }
+}
 JNI(void, nativeResetProject) { try { AudioDevice::instance().reset_core_for_new_project(); } catch (...) {} }
 JNI(jstring, nativeDeviceStatus) {
     DeviceStatus s = AudioDevice::instance().status();
@@ -69,7 +75,7 @@ JNI(jstring, nativeDeviceStatus) {
         ",\"xruns\":" + num(s.xruns) + ",\"inputUnderruns\":" + num(s.input_underruns) +
         ",\"restarts\":" + num(s.restarts) + ",\"lastError\":" + num(s.last_error) +
         ",\"estOutputLatencyMs\":" + num(s.est_output_latency_ms) + ",\"estInputLatencyMs\":" + num(s.est_input_latency_ms) +
-        ",\"estRoundTripFrames\":" + num(s.est_round_trip_frames) +
+        ",\"estRoundTripFrames\":" + num(s.est_round_trip_frames) + ",\"inputDeviceId\":" + num(s.input_device_id) +
         ",\"engineRate\":" + num(c->engine_rate()) + ",\"underrunBlocks\":" + num((double)c->underrun_blocks()) +
         ",\"maxRenderLoad\":" + num(c->max_render_load()) + "}";
     return to_jstring(env, j);

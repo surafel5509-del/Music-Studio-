@@ -23,6 +23,7 @@ struct DeviceStatus {
     int input_underruns = 0;        // output callbacks that found less input than needed
     int restarts = 0;               // automatic stream re-opens (route change / disconnect)
     int last_error = 0;             // last AAudio result code that was not OK
+    int input_device_id = 0;        // AudioDeviceInfo id of the open input stream (0 = none / unknown)
     float est_output_latency_ms = 0;   // buffer-size based ESTIMATE, not a measurement
     float est_input_latency_ms = 0;
     int est_round_trip_frames = 0;
@@ -39,6 +40,9 @@ public:
     bool start(int preferred_rate, bool want_input);
     void stop();
     bool running() const { return out_ != nullptr; }
+    // Chooses the microphone by its Android AudioDeviceInfo id (0 = system default). Reopens the input stream when one is
+    // open. Falls back to the default device when the chosen one cannot be opened. Returns false when no input is open afterwards.
+    bool set_input_device(int id);
     bool enable_input(bool on);                  // e.g. after RECORD_AUDIO was granted
     DeviceStatus status();
 
@@ -49,6 +53,7 @@ private:
     AudioDevice() = default;
     bool open_output(int rate);
     bool open_input(int rate);
+    bool open_input_id(int rate, int dev_id);
     void close_streams();
     void schedule_reopen();
 
@@ -62,6 +67,7 @@ private:
     AAudioStream* in_ = nullptr;
     int rate_ = 0, out_ch_ = 2, in_ch_ = 0;
     bool want_input_ = false;
+    int input_dev_pref_ = 0;                     // guarded by mu_
     std::atomic<bool> reopening_{false};
     std::atomic<int> restarts_{0}, last_error_{0};
     std::atomic<int> input_underruns_{0};

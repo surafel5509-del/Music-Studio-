@@ -33,6 +33,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -99,6 +100,21 @@ fun SettingsScreen(onBack: () -> Unit, vm: SettingsViewModel = hiltViewModel()) 
             SectionCard("Recording input") {
                 Text("These settings change the signal that is metered, monitored AND written to the take file. Android's own processing (noise suppression, AGC) is requested off, so what you record is the microphone signal.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Microphone", style = MaterialTheme.typography.labelMedium)
+                var devices by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(listInputDevices(ctx)) }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    FilterChip(selected = st.inputDeviceId == 0, onClick = { upd { it.copy(inputDeviceId = 0) } }, label = { Text("Automatic") })
+                    devices.forEach { dv ->
+                        FilterChip(selected = st.inputDeviceId == dv.id, onClick = { upd { it.copy(inputDeviceId = dv.id) } }, label = { Text(dv.label) })
+                    }
+                    OutlinedButton(onClick = { devices = listInputDevices(ctx) }) { Text("Rescan") }
+                }
+                val active = devices.firstOrNull { it.id == d.inputDeviceId }
+                Text(if (d.inputRunning) "In use: ${active?.label ?: "system default"}" else "No input stream is open.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (st.inputDeviceId != 0 && devices.none { it.id == st.inputDeviceId })
+                    Text("The chosen microphone is not connected; the system default is used instead.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                Text("Switching is refused while a take is being recorded.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("File format", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(16 to "16-bit", 24 to "24-bit", 32 to "32-bit float").forEach { (b, label) ->

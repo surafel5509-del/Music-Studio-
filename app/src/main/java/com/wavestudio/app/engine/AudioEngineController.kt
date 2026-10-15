@@ -28,7 +28,7 @@ data class DeviceStatus(
     val inputChannels: Int = 0, val framesPerBurst: Int = 0, val bufferFrames: Int = 0,
     val xruns: Int = 0, val inputUnderruns: Int = 0, val restarts: Int = 0, val lastError: Int = 0,
     val estOutputLatencyMs: Float = 0f, val estInputLatencyMs: Float = 0f, val estRoundTripFrames: Int = 0,
-    val underrunBlocks: Long = 0, val maxRenderLoad: Float = 0f
+    val underrunBlocks: Long = 0, val maxRenderLoad: Float = 0f, val inputDeviceId: Int = 0
 ) {
     companion object {
         fun parse(json: String): DeviceStatus = try {
@@ -36,7 +36,7 @@ data class DeviceStatus(
             DeviceStatus(m.bool("outputRunning"), m.bool("inputRunning"), m.int("sampleRate"), m.int("inputChannels"),
                 m.int("framesPerBurst"), m.int("bufferFrames"), m.int("xruns"), m.int("inputUnderruns"), m.int("restarts"),
                 m.int("lastError"), m.float("estOutputLatencyMs"), m.float("estInputLatencyMs"), m.int("estRoundTripFrames"),
-                m.long("underrunBlocks"), m.float("maxRenderLoad"))
+                m.long("underrunBlocks"), m.float("maxRenderLoad"), m.int("inputDeviceId"))
         } catch (_: JsonException) { DeviceStatus() }
     }
 }
@@ -177,6 +177,8 @@ class AudioEngineController @Inject constructor(val native: NativeAudioEngine) {
     /** Remembered so it survives the engine core being rebuilt (device restart / sample-rate change). */
     @Volatile private var inputCond = Triple(0f, 0f, false)
     fun resetInputClips() = native.nativeResetInputClips()
+    /** Picks the microphone by AudioDeviceInfo id (0 = system default). Refused while recording. */
+    fun setInputDevice(id: Int): Boolean { val ok = native.nativeSetInputDevice(id); refreshDevice(); return ok }
 
     fun mediaInfo(path: String): MediaInfo = MediaInfo.parse(native.nativeMediaInfo(path))
     fun resetLoudness() = native.nativeResetLoudness()

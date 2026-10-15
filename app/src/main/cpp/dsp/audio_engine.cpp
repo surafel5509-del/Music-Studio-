@@ -160,6 +160,12 @@ bool AudioDevice::open_output(int rate) {
 }
 
 bool AudioDevice::open_input(int rate) {
+    if (input_dev_pref_ > 0 && open_input_id(rate, input_dev_pref_)) return true;
+    if (input_dev_pref_ > 0) LOGE("input device %d could not be opened, using the default", input_dev_pref_);
+    return open_input_id(rate, 0);
+}
+
+bool AudioDevice::open_input_id(int rate, int dev_id) {
     AAudioStreamBuilder* b = nullptr;
     if (AAudio_createStreamBuilder(&b) != AAUDIO_OK) return false;
     AAudioStreamBuilder_setDirection(b, AAUDIO_DIRECTION_INPUT);
@@ -174,6 +180,7 @@ bool AudioDevice::open_input(int rate) {
         preset_set = true;
     }
     if (rate > 0) AAudioStreamBuilder_setSampleRate(b, rate);
+    if (dev_id > 0) AAudioStreamBuilder_setDeviceId(b, dev_id);
     AAudioStreamBuilder_setDataCallback(b, &AudioDevice::in_cb, this);
     AAudioStreamBuilder_setErrorCallback(b, &AudioDevice::err_cb, this);
     aaudio_result_t r = AAudioStreamBuilder_openStream(b, &in_);
@@ -227,6 +234,22 @@ bool AudioDevice::start(int preferred_rate, bool want_input) {
     return true;
 }
 
+bool AudioDevice::set_input_device(int id) {
+    std::lock_guard<std::mutex> l(mu_);
+    id = id < 0 ? 0 : id;
+    if (id == input_dev_pref_ && (in_ != nullptr || !want_input_)) return in_ != nullptr;
+    input_dev_pref_ = id;
+    if (!out_ || !want_input_) return in_ != nullptr;
+    if (in_) {                                   // reopen on the new device
+        in_channels_cb_.store(0, std::memory_order_release);
+        AAudioStream_requestStop(in_); AAudioStream_close(in_); in_ = nullptr; in_ch_ = 0;
+    }
+    if (!open_input(rate_)) return false;
+    core_->set_input_latency_frames(AAudioStream_getBufferSizeInFrames(out_) + AAudioStream_getBufferSizeInFrames(in_));
+    AAudioStream_requestStart(in_);
+    return true;
+}
+
 bool AudioDevice::enable_input(bool on) {
     std::lock_guard<std::mutex> l(mu_);
     want_input_ = on;
@@ -256,6 +279,7 @@ DeviceStatus AudioDevice::status() {
     s.output_running = out_ != nullptr;
     s.input_running = in_ != nullptr;
     s.input_channels = in_ch_;
+    s.input_device_id = in_ ? AAudioStream_getDeviceId(in_) : 0;
     s.restarts = restarts_.load();
     s.last_error = last_error_.load();
     s.input_underruns = input_underruns_.load();

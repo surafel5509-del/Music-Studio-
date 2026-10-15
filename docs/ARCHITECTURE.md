@@ -37,7 +37,14 @@ Compose UI  ──►  ViewModels  ──►  ProjectSession (singleton, Hilt)  
   the supported rates, mono/stereo, TPDF dither (applied for 16-bit output only); reports peak, LUFS and clipping; cancellable.
 * `audio_engine` (`AudioDevice`) – AAudio output/input, error callback reopens on a separate thread, rate clone.
 * Effects (all in `dsp/effects`, created by type id): gain, eq, filter, compressor, limiter, gate, deesser, reverb,
-  delay, chorus, flanger, phaser, distortion, bitcrusher, stereo_width.
+  delay, chorus, flanger, phaser, distortion, bitcrusher, stereo_width, plus (Phase 9) `voice_fx` – YIN `PitchDetector`,
+  period-synchronous `GrainPitch` shifter, `pitch_shift`, `autotune` (detect → snap to key/scale → shift with a retune-speed
+  smoother), `voice_changer` (STFT formant warp + pitch + ring mod), `denoise` (STFT noise tracker + spectral gate; the
+  `Stft` helper has 1024 samples of latency) – and `mod_fx` (`tremolo`/auto-pan, `exciter`). Parameters may declare discrete
+  `options` (reported to the UI as JSON `"options"`).
+* Input conditioning in `EngineCore::render`: trim gain (ramped), optional 2nd-order low-cut, optional DC blocker, applied before
+  metering, monitoring and the recorder; bit-exact when left at the defaults. Input clipping is counted (≥ 0.999) and reported
+  as the 8th meter value. `AudioDevice::set_input_device` selects the microphone by `AudioDeviceInfo` id (falls back to default).
 
 ## Android layer
 * `engine/` – `NativeAudioEngine` (JNI declarations), `AudioEngineController` (device lifecycle, polled meters,
@@ -47,6 +54,13 @@ Compose UI  ──►  ViewModels  ──►  ProjectSession (singleton, Hilt)  
 * `service/` – foreground service keeps the process alive while playing/recording; `ExportService` for exports.
 * `audio/AudioImporter` – SAF import via `MediaExtractor`/`MediaCodec` to float PCM WAV in the project folder.
 * `data/` – Room keeps only the project list (name, dates, folder). Migration: no destructive fallback.
+* `settings/AppSettings` – SharedPreferences-backed `StateFlow` of the pure `AppSettingsData` (validated by `sanitized()`);
+  `MainActivity` applies theme, keep-screen-on, input conditioning and microphone choice.
+* `project/Synth`, `StudioDoc` (+ `StudioOps`) – beat maker / piano roll data, saved in `project.json` under `"studio"`, and the
+  deterministic offline synth; `ProjectSession.addRenderedClip` writes the rendered WAV into `media/` and adds a clip.
+* `ui/studio` (Studio screen), `ui/common/FloatingPanel` + `project/PanelGeometry` (the movable/resizable overview box),
+  `project/EffectPresets`, `project/EffectCatalog`. `scripts/check_presets.py` (run by `run_native_tests.sh` and CI) verifies that
+  every preset parameter id exists natively and is inside its range.
 * `ui/` – editor (timeline, transport, inspector, mixer panel, spectrum/LUFS), mixer, effects, settings (live device
   diagnostics), built-in-effects list.
 

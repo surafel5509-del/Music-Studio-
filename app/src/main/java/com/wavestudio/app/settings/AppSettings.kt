@@ -30,6 +30,7 @@ class AppSettings @Inject constructor(@ApplicationContext ctx: Context) {
             inputGainDb = prefs.getFloat("in_gain_db", d.inputGainDb),
             inputLowCutHz = prefs.getInt("in_lowcut", d.inputLowCutHz),
             removeDc = prefs.getBoolean("in_dc", d.removeDc),
+            inputDeviceId = prefs.getInt("in_dev", d.inputDeviceId),
             exportFlac = prefs.getBoolean("exp_flac", d.exportFlac),
             exportBitDepth = prefs.getInt("exp_bits", d.exportBitDepth),
             exportSampleRate = prefs.getInt("exp_rate", d.exportSampleRate)
@@ -43,7 +44,7 @@ class AppSettings @Inject constructor(@ApplicationContext ctx: Context) {
         prefs.edit()
             .putString("theme", n.themeMode.name).putInt("accent", n.accentIndex).putBoolean("dynamic", n.dynamicColor)
             .putBoolean("keep_screen_on", n.keepScreenOn).putInt("rec_bits", n.recordBitDepth)
-            .putFloat("in_gain_db", n.inputGainDb).putInt("in_lowcut", n.inputLowCutHz).putBoolean("in_dc", n.removeDc)
+            .putFloat("in_gain_db", n.inputGainDb).putInt("in_lowcut", n.inputLowCutHz).putBoolean("in_dc", n.removeDc).putInt("in_dev", n.inputDeviceId)
             .putBoolean("exp_flac", n.exportFlac).putInt("exp_bits", n.exportBitDepth).putInt("exp_rate", n.exportSampleRate)
             .apply()
     }

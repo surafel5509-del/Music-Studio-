@@ -731,6 +731,9 @@ class AppSettingsDataTest {
         assertEquals(-3.5f, AppSettingsData(inputGainDb = -3.4f).sanitized().inputGainDb, 0f)
         assertEquals(0, AppSettingsData(accentIndex = -4).sanitized().accentIndex)
     }
+    @Test fun inputDeviceIdNeverNegative() {
+        assertEquals(0, AppSettingsData(inputDeviceId = -5).sanitized().inputDeviceId); assertEquals(42, AppSettingsData(inputDeviceId = 42).sanitized().inputDeviceId)
+    }
     @Test fun flacNeverKeeps32Bit() {
         assertEquals(24, AppSettingsData(exportFlac = true, exportBitDepth = 32).sanitized().exportBitDepth)
         assertEquals(32, AppSettingsData(exportFlac = false, exportBitDepth = 32).sanitized().exportBitDepth)

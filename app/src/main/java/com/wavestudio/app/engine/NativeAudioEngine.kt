@@ -59,6 +59,7 @@ class NativeAudioEngine {
     external fun nativeIsRecording(): Boolean
     external fun nativeSetInputLatency(frames: Long)
     external fun nativeSetMonitor(on: Boolean, gain: Float)
+    external fun nativeSetInputDevice(id: Int): Boolean
     external fun nativeSetInputConditioning(gainDb: Float, hpfHz: Float, dcBlock: Boolean)
     external fun nativeResetInputClips()
 

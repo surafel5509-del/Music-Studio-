@@ -22,6 +22,8 @@ data class AppSettingsData(
     /** 0 = off, else a 2nd-order low-cut at this frequency (removes rumble / handling noise). */
     val inputLowCutHz: Int = 0,
     val removeDc: Boolean = true,
+    /** AudioDeviceInfo id of the preferred microphone; 0 = system default. The engine falls back to the default if it is gone. */
+    val inputDeviceId: Int = 0,
     val exportFlac: Boolean = false,
     val exportBitDepth: Int = 24,
     val exportSampleRate: Int = 48000
@@ -33,6 +35,7 @@ data class AppSettingsData(
         val exBits = exportBitDepth.takeIf { it == 16 || it == 24 || it == 32 } ?: 24
         return copy(
             accentIndex = accentIndex.coerceIn(0, ACCENTS.size - 1),
+            inputDeviceId = inputDeviceId.coerceAtLeast(0),
             recordBitDepth = recordBitDepth.takeIf { it == 16 || it == 24 || it == 32 } ?: 24,
             inputGainDb = Math.round(g * 2f) / 2f,                         // 0.5 dB steps
             inputLowCutHz = LOW_CUTS.minByOrNull { Math.abs(it - inputLowCutHz) } ?: 0,
