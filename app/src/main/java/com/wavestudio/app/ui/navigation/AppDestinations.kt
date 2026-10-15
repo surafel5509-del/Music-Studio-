@@ -8,6 +8,7 @@ sealed class AppDestinations(val route: String) {
         const val ARG_PID = "projectId"
     }
     object Settings : AppDestinations("settings")
+    object Studio : AppDestinations("studio")
     object Plugins : AppDestinations("plugins")
     object Mixer : AppDestinations("mixer/{projectId}") {
         fun createRoute(projectId: Long) = "mixer/$projectId"

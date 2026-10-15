@@ -740,3 +740,179 @@ class AppSettingsDataTest {
         assertTrue(AppSettingsData().accent.argb != 0L)
     }
 }
+
+class StudioTest {
+    private fun rms(a: FloatArray, from: Int, to: Int): Double { var s = 0.0; for (i in from until minOf(to, a.size)) s += a[i].toDouble() * a[i]; return Math.sqrt(s / maxOf(1, to - from)) }
+    private fun zeroCrossHz(a: FloatArray, from: Int, to: Int, rate: Int): Double {
+        var c = 0; for (i in from + 1 until to) if ((a[i - 1] < 0) != (a[i] < 0)) c++
+        return c / 2.0 / ((to - from).toDouble() / rate)
+    }
+
+    private fun acPitch(a: FloatArray, from: Int, to: Int, rate: Int, minHz: Double, maxHz: Double): Double {
+        var best = 0.0; var bestLag = 0
+        for (lag in (rate / maxHz).toInt()..(rate / minHz).toInt()) {
+            var c = 0.0; var e = 0.0
+            for (i in from until to) { c += a[i].toDouble() * a[i + lag]; e += a[i + lag].toDouble() * a[i + lag] }
+            val n = if (e > 0) c / Math.sqrt(e) else 0.0
+            if (n > best) { best = n; bestLag = lag }
+        }
+        return rate.toDouble() / bestLag
+    }
+
+    @Test fun beatOpsAndNormalization() {
+        var b = BeatDoc()
+        assertEquals(8, b.rows.size)
+        b = StudioOps.cycleStep(b, DrumVoice.KICK, 0)
+        assertEquals(2, b.rows[0].at(0))
+        b = StudioOps.cycleStep(b, DrumVoice.KICK, 0); assertEquals(3, b.rows[0].at(0))
+        b = StudioOps.cycleStep(b, DrumVoice.KICK, 0); assertEquals(1, b.rows[0].at(0))
+        b = StudioOps.cycleStep(b, DrumVoice.KICK, 0); assertEquals(0, b.rows[0].at(0))
+        assertEquals(b, StudioOps.cycleStep(b, DrumVoice.KICK, 999))                  // out of range: no change
+        val g = StudioOps.setBars(StudioOps.demoBeat(1), 4)
+        assertEquals(64, g.rows[0].steps.length); assertEquals(StudioOps.hitCount(StudioOps.demoBeat(1)), StudioOps.hitCount(g))
+        assertEquals(16, StudioOps.setBars(g, 1).rows[0].steps.length)
+        assertEquals(MAX_BAR_COUNT, StudioOps.setBars(g, 99).bars)
+        assertEquals(0, StudioOps.hitCount(StudioOps.clearBeat(g)))
+        val damaged = StudioOps.normalizeBeat(BeatDoc(bars = 1, swing = Float.NaN, rows = listOf(DrumRowDoc("kick", "9x3"), DrumRowDoc("nonsense", "3333"))))
+        assertEquals(8, damaged.rows.size); assertEquals(16, damaged.rows[0].steps.length); assertEquals(0f, damaged.swing, 0f)
+        assertEquals("3", damaged.rows[0].steps.substring(0, 1).let { if (damaged.rows[0].steps.contains('3')) "3" else it })
+    }
+
+    @Test fun rollOps() {
+        var r = RollDoc(bars = 1)
+        r = StudioOps.addNote(r, 60, 0, 4)
+        r = StudioOps.addNote(r, 60, 2, 4)                           // overlaps on the same pitch: replaces
+        assertEquals(1, r.notes.size); assertEquals(2, r.notes[0].step)
+        r = StudioOps.addNote(r, 64, 15, 40)                          // length clamped to the end of the roll
+        assertEquals(1, r.notes.first { it.pitch == 64 }.length)
+        r = StudioOps.addNote(r, 5, 0, 1); r = StudioOps.addNote(r, 60, 99, 1)   // out of range: ignored
+        assertEquals(2, r.notes.size)
+        assertNotNull(StudioOps.noteAt(r, 60, 5)); assertNull(StudioOps.noteAt(r, 60, 6))
+        r = StudioOps.removeNoteAt(r, 60, 3); assertEquals(1, r.notes.size)
+        assertEquals(66, StudioOps.transpose(r, 2).notes[0].pitch)
+        assertEquals(0, StudioOps.transpose(r, 200).notes.size)       // pushed out of range
+        assertEquals(0, StudioOps.setRollBars(StudioOps.demoRoll(), 1).notes.count { it.step >= 16 })
+        assertEquals("C4", StudioOps.pitchName(60)); assertEquals("A#2", StudioOps.pitchName(46)); assertTrue(StudioOps.isBlackKey(61)); assertFalse(StudioOps.isBlackKey(60))
+    }
+
+    @Test fun studioSurvivesSaveLoad() {
+        val d = ProjectDoc(studio = StudioDoc(StudioOps.demoBeat(2).copy(swing = 0.2f), StudioOps.demoRoll().copy(instrument = "bass")))
+        val back = ProjectCodec.decode(ProjectCodec.encode(d))
+        assertEquals(d.studio, back.studio)
+        // a project written before the studio existed opens with an empty studio
+        val old = Json.write(ProjectCodec.toMap(ProjectDoc()).filterKeys { it != "studio" })
+        assertEquals(StudioDoc(), ProjectCodec.decode(old).studio)
+        // garbage inside the studio object must not break the project
+        val m = LinkedHashMap(ProjectCodec.toMap(ProjectDoc())); m["studio"] = "not an object"
+        assertEquals(StudioDoc(), ProjectCodec.decode(Json.write(m)).studio)
+    }
+
+    @Test fun drumHitsAreFiniteBoundedAndDistinct() {
+        val seen = HashSet<Int>()
+        for (v in DrumVoice.values()) {
+            val h = Synth.drumHit(v)
+            assertTrue(v.id, h.size > 1000)
+            var pk = 0f; for (s in h) { assertTrue(s.isFinite()); pk = maxOf(pk, Math.abs(s)) }
+            assertEquals(v.id, 0.9f, pk, 0.001f)
+            assertEquals("deterministic", h.toList(), Synth.drumHit(v).toList())
+            seen.add(h.contentHashCode())
+        }
+        assertEquals(DrumVoice.values().size, seen.size)
+        // the kick is low (below 200 Hz in its body), the closed hat is bright
+        val kick = Synth.drumHit(DrumVoice.KICK)
+        assertTrue(zeroCrossHz(kick, 4800, 14400, 48000) < 200)
+        val hat = Synth.drumHit(DrumVoice.HAT)
+        assertTrue(zeroCrossHz(hat, 100, 3000, 48000) > 3000)
+    }
+
+    @Test fun beatTimingLengthAndSilence() {
+        val rate = 48000
+        val empty = Synth.renderBeat(BeatDoc(), 120f)
+        assertEquals(rate * 2, empty.frames)                          // 1 bar at 120 bpm = 2 s exactly
+        assertEquals(0f, empty.peak(), 0f)
+        var b = StudioOps.cycleStep(BeatDoc(), DrumVoice.KICK, 4)     // step 4 = beat 2 = 0.5 s
+        val r = Synth.renderBeat(b, 120f)
+        assertEquals(0.0, rms(r.left, 0, rate / 2 - 8), 0.0)          // nothing before the hit
+        assertTrue(rms(r.left, rate / 2, rate / 2 + 2400) > 0.05)
+        assertTrue(r.peak() <= 1f)
+        assertEquals(r.left.toList(), Synth.renderBeat(b, 120f).left.toList())
+        // tempo changes the length; 4 bars at 90 bpm = 10.666 s
+        assertEquals(Math.round(4 * 4 * 60.0 / 90 * rate).toInt(), Synth.renderBeat(StudioOps.setBars(BeatDoc(), 4), 90f).frames)
+        // swing moves odd steps later and never even ones
+        val hatAt1 = StudioOps.cycleStep(BeatDoc(), DrumVoice.HAT, 1)
+        val straight = Synth.renderBeat(hatAt1, 120f); val swung = Synth.renderBeat(StudioOps.setSwing(hatAt1, 0.5f), 120f)
+        fun firstNonZero(a: FloatArray): Int { for (i in a.indices) if (Math.abs(a[i]) > 1e-4f) return i; return -1 }
+        assertTrue(firstNonZero(swung.left) > firstNonZero(straight.left) + 1000)
+        // mute silences a lane; a loop wraps the tail of the last hit to the start
+        assertEquals(0f, Synth.renderBeat(StudioOps.setRow(b, DrumVoice.KICK, mute = true), 120f).peak(), 0f)
+        val last = StudioOps.cycleStep(BeatDoc(), DrumVoice.OPEN_HAT, 15)
+        val looped = Synth.renderBeat(last, 120f, wrap = true); val oneShot = Synth.renderBeat(last, 120f, wrap = false)
+        assertTrue(rms(looped.left, 0, 2000) > 0.01); assertEquals(0.0, rms(oneShot.left, 0, 2000), 0.0)
+        assertTrue(oneShot.frames > looped.frames)
+    }
+
+    @Test fun dense_beatStaysBounded() {
+        var b = BeatDoc(bars = 2)
+        for (v in DrumVoice.values()) for (s in 0 until 32) b = StudioOps.cycleStep(StudioOps.cycleStep(b, v, s), v, s)   // all accent
+        val r = Synth.renderBeat(b, 200f)
+        assertTrue(r.peak() <= 1.0f); for (x in r.left) assertTrue(x.isFinite())
+        assertTrue(r.peak() > 0.5f)
+    }
+
+    @Test fun notesHaveTheRightPitchAndEnvelope() {
+        val rate = 48000
+        var roll = RollDoc(bars = 1, instrument = "sine")
+        roll = StudioOps.addNote(roll, 69, 0, 8)                      // A4 for half a bar (1 s at 120 bpm)
+        val r = Synth.renderRoll(roll, 120f)
+        assertEquals(440.0, zeroCrossHz(r.left, 4800, 40000, rate), 4.0)
+        assertTrue(rms(r.left, 12000, 24000) > 0.1)
+        // releases to silence, finite, and the note ends where the note-off plus release says
+        assertEquals(0.0, rms(r.left, r.frames - 32, r.frames), 1e-3)
+        for (x in r.left) assertTrue(x.isFinite())
+        // an octave up is twice the frequency, in every instrument without a hard cutoff problem
+        for (inst in Instruments.all) {
+            val one = Synth.renderPreviewNote(inst.id, 57, 0.5f)
+            val two = Synth.renderPreviewNote(inst.id, 69, 0.5f)
+            assertTrue(inst.id, one.peak() > 0.05f && one.peak() <= 1f)
+            assertEquals(inst.id, 220.0, acPitch(one.left, 3000, 6000, rate, 150.0, 300.0), 4.0)
+            assertEquals(inst.id, 440.0, acPitch(two.left, 3000, 6000, rate, 300.0, 600.0), 8.0)
+        }
+        // louder velocity is louder
+        val soft = Synth.renderRoll(RollDoc(1, "sine", listOf(RollNote(60, 0, 4, 0.2f))), 120f)
+        val loud = Synth.renderRoll(RollDoc(1, "sine", listOf(RollNote(60, 0, 4, 1.0f))), 120f)
+        assertTrue(loud.peak() > soft.peak() * 3)
+        assertEquals(0f, Synth.renderRoll(RollDoc(1, "keys", emptyList()), 120f).peak(), 0f)
+    }
+
+    @Test fun chordsAndLongRollsStayBounded() {
+        var roll = RollDoc(bars = 8, instrument = "pad")
+        for (s in 0 until 128 step 8) for (p in listOf(48, 52, 55, 60, 64, 67, 72)) roll = StudioOps.addNote(roll, p, s, 8)
+        val r = Synth.renderRoll(roll, 140f)
+        assertTrue(r.peak() <= 1f); assertTrue(r.peak() > 0.2f)
+        for (x in r.right) assertTrue(x.isFinite())
+    }
+
+    @Test fun wavWriterProducesAReadableFile() {
+        val dir = Files.createTempDirectory("wavout").toFile()
+        val buf = Synth.renderBeat(StudioOps.demoBeat(1), 120f)
+        for (bits in intArrayOf(16, 24)) {
+            val f = File(dir, "t$bits.wav"); WavOut.write(f, buf, 48000, bits)
+            val bytes = f.readBytes()
+            assertEquals("RIFF", String(bytes, 0, 4)); assertEquals("data", String(bytes, 36, 4))
+            val bb = java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            assertEquals(bits, bb.getShort(34).toInt()); assertEquals(48000, bb.getInt(24))
+            assertEquals(buf.frames * 2 * bits / 8, bb.getInt(40)); assertEquals(44 + buf.frames * 2 * bits / 8, bytes.size)
+            assertFalse(File(dir, "t$bits.wav.part").exists())
+        }
+        // 24-bit round trip is accurate to 1 LSB-ish
+        val b = java.nio.ByteBuffer.wrap(File(dir, "t24.wav").readBytes()).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        var maxErr = 0.0
+        for (i in 0 until 5000) {
+            val o = 44 + i * 6
+            val v = (b.get(o).toInt() and 0xFF) or ((b.get(o + 1).toInt() and 0xFF) shl 8) or (b.get(o + 2).toInt() shl 16)
+            maxErr = maxOf(maxErr, Math.abs(v / 8388607.0 - buf.left[i]))
+        }
+        assertTrue(maxErr < 2e-7)
+        dir.deleteRecursively()
+    }
+}

@@ -125,6 +125,7 @@ fun EditorScreen(
     onOpenMixer: () -> Unit,
     onOpenEffects: (Int) -> Unit,
     onOpenPlugins: () -> Unit,
+    onOpenStudio: () -> Unit,
     vm: EditorViewModel = hiltViewModel()
 ) {
     val doc by vm.doc.collectAsState()
@@ -200,7 +201,8 @@ fun EditorScreen(
                 actions = {
                     IconButton(onClick = { vm.undo() }, enabled = undoState.canUndo) { Icon(Icons.Default.Undo, "Undo ${undoState.undoLabel ?: ""}") }
                     IconButton(onClick = { vm.redo() }, enabled = undoState.canRedo) { Icon(Icons.Default.Redo, "Redo ${undoState.redoLabel ?: ""}") }
-                    IconButton(onClick = { pickAudio.launch(arrayOf("audio/*")) }) { Icon(Icons.Default.FolderOpen, "Import audio") }
+                    IconButton(onClick = { vm.save(); onOpenStudio() }) { Icon(Icons.Default.Piano, "Beat maker and piano roll") }
+                    IconButton(onClick = { pickAudio.launch(arrayOf("audio/*", "video/*")) }) { Icon(Icons.Default.FolderOpen, "Import audio or video (extracts its sound)") }
                     IconButton(onClick = { showExport = true }) { Icon(Icons.Default.Download, "Export mix") }
                     IconButton(onClick = onOpenPlugins) { Icon(Icons.Default.Extension, "Effects list") }
                 }

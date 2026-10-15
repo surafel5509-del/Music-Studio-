@@ -13,6 +13,7 @@ import com.wavestudio.app.ui.mixer.MixerScreen
 import com.wavestudio.app.ui.plugins.PluginsScreen
 import com.wavestudio.app.ui.projects.ProjectsScreen
 import com.wavestudio.app.ui.settings.SettingsScreen
+import com.wavestudio.app.ui.studio.StudioScreen
 
 @Composable
 fun WaveStudioNavGraph(navController: NavHostController) {
@@ -42,8 +43,12 @@ fun WaveStudioNavGraph(navController: NavHostController) {
                 onBack = { navController.popBackStack() },
                 onOpenMixer = { navController.navigate(AppDestinations.Mixer.createRoute(pid)) },
                 onOpenEffects = { tid -> navController.navigate(AppDestinations.Effects.createRoute(tid)) },
-                onOpenPlugins = { navController.navigate(AppDestinations.Plugins.route) }
+                onOpenPlugins = { navController.navigate(AppDestinations.Plugins.route) },
+                onOpenStudio = { navController.navigate(AppDestinations.Studio.route) }
             )
+        }
+        composable(AppDestinations.Studio.route) {
+            StudioScreen(onBack = { navController.popBackStack() })
         }
         composable(AppDestinations.Settings.route) {
             SettingsScreen(onBack = { navController.popBackStack() })

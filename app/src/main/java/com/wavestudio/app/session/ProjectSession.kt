@@ -288,6 +288,27 @@ class ProjectSession @Inject constructor(
         } catch (t: Throwable) { t.message ?: "Import failed" }
     }
 
+    /**
+     * Writes rendered studio audio (beat maker / piano roll) into the project's media folder and places it as a clip on a
+     * new track at [atFrame]. From then on it is ordinary audio. Returns an error message, or null on success.
+     */
+    suspend fun addRenderedClip(name: String, trackName: String, buf: com.wavestudio.app.project.StereoBuffer, atFrame: Long): String? = withContext(Dispatchers.IO) {
+        val s = store ?: return@withContext "No project is open"
+        try {
+            val file = File(s.mediaDir, "${name.lowercase().replace(Regex("[^a-z0-9]+"), "_")}_${System.currentTimeMillis()}.wav")
+            com.wavestudio.app.project.WavOut.write(file, buf, com.wavestudio.app.project.Synth.RATE, 24)
+            val info = controller.mediaInfo(file.absolutePath)
+            if (!info.ok || info.frames <= 0) { file.delete(); return@withContext "The rendered audio could not be read back (error ${info.error})" }
+            edit("Add $name") { d0 ->
+                val (d1, t) = EditOps.addTrack(d0, trackName)
+                EditOps.addClip(d1, t, "media/${file.name}", name, atFrame, info.timelineFrames).first
+            }
+            saveNow()
+            null
+        } catch (c: kotlinx.coroutines.CancellationException) { throw c
+        } catch (t: Throwable) { t.message ?: "Could not add the clip" }
+    }
+
     // ------------------------------------------------------------------ analysis helpers
 
     /** Largest absolute sample of the clip's audible part at unity gain (ignores clip gain and fades), or null if unreadable. */

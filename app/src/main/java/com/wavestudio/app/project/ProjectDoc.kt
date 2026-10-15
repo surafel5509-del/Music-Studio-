@@ -70,6 +70,8 @@ data class ProjectDoc(
     val tracks: List<TrackDoc> = emptyList(),
     val clips: List<ClipDoc> = emptyList(),
     val markers: List<MarkerDoc> = emptyList(),
+    /** Beat maker + piano roll sketches (they render to normal audio clips; see [Synth]). */
+    val studio: StudioDoc = StudioDoc(),
     val loopStart: Long = 0,
     val loopEnd: Long = 0,
     val loopEnabled: Boolean = false,

@@ -23,7 +23,7 @@ data class ImportedAudio(val file: File, val displayName: String, val info: Medi
 
 /**
  * Brings an audio file picked through the Storage Access Framework into the project's media folder as a WAV
- * the native engine can read. WAV files are copied byte-for-byte (no quality loss). Anything else the device's
+ * the native engine can read. WAV files are copied byte-for-byte (no quality loss). Video files (MP4, MKV, WebM, ...) have their first audio track extracted the same way. Anything else the device's
  * decoders understand (MP3, AAC/M4A, OGG, FLAC, ...) is decoded in a streaming fashion to 16-bit PCM WAV, so memory
  * use does not depend on the file length. All work uses the platform decoders: no network, no extra libraries.
  */
@@ -37,6 +37,14 @@ class AudioImporter(private val ctx: Context, private val engine: AudioEngineCon
         val part = File(mediaDir, "import_$stamp.part")
         val out = File(mediaDir, "${base}_$stamp.wav")
         try {
+            // Video files can be huge: pull the audio track straight from the picked URI instead of copying the whole file first.
+            val type = try { ctx.contentResolver.getType(uri) } catch (_: Exception) { null }
+            if (type != null && type.startsWith("video/")) {
+                decodeToWav({ it.setDataSource(ctx, uri, null) }, out)
+                val vi = engine.mediaInfo(out.absolutePath)
+                if (!vi.ok || vi.frames <= 0) throw ImportException("The extracted audio could not be read back (error ${vi.error})")
+                return@withContext ImportedAudio(out, display, vi)
+            }
             val copied = ctx.contentResolver.openInputStream(uri)?.use { i -> part.outputStream().use { o -> i.copyTo(o) } }
                 ?: throw ImportException("Cannot open the selected file")
             if (copied <= 0L) throw ImportException("The selected file is empty")
@@ -47,7 +55,7 @@ class AudioImporter(private val ctx: Context, private val engine: AudioEngineCon
                 if (!part.renameTo(out)) throw ImportException("Cannot store the imported file")
                 return@withContext ImportedAudio(out, display, direct)
             }
-            decodeToWav(part, out)
+            decodeToWav({ it.setDataSource(part.absolutePath) }, out)
             val info = engine.mediaInfo(out.absolutePath)
             if (!info.ok || info.frames <= 0) throw ImportException("The decoded audio could not be read back (error ${info.error})")
             ImportedAudio(out, display, info)
@@ -68,18 +76,18 @@ class AudioImporter(private val ctx: Context, private val engine: AudioEngineCon
 
     private fun sanitize(s: String) = s.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').take(40)
 
-    private suspend fun decodeToWav(src: File, dst: File) {
+    private suspend fun decodeToWav(openSource: (MediaExtractor) -> Unit, dst: File) {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
         try {
-            extractor.setDataSource(src.absolutePath)
+            openSource(extractor)
             var track = -1
             var format: MediaFormat? = null
             for (i in 0 until extractor.trackCount) {
                 val f = extractor.getTrackFormat(i)
                 if (f.getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { track = i; format = f; break }
             }
-            if (track < 0 || format == null) throw ImportException("No audio track found (unsupported format?)")
+            if (track < 0 || format == null) throw ImportException("No audio track found (a video without sound, or an unsupported format)")
             extractor.selectTrack(track)
             val mime = format.getString(MediaFormat.KEY_MIME)!!
             codec = MediaCodec.createDecoderByType(mime)

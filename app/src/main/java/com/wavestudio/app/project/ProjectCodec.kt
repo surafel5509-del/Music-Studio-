@@ -37,6 +37,7 @@ object ProjectCodec {
         },
         "markers" to d.markers.map { linkedMapOf<String, Any?>("id" to it.id, "frame" to it.frame, "name" to it.name) },
         "loop" to linkedMapOf<String, Any?>("start" to d.loopStart, "end" to d.loopEnd, "enabled" to d.loopEnabled),
+        "studio" to studioToMap(d.studio),
         "punch" to linkedMapOf<String, Any?>("in" to d.punchIn, "out" to d.punchOut, "enabled" to d.punchEnabled),
         "metronome" to d.metronome,
         "countInBars" to d.countInBars,
@@ -104,6 +105,7 @@ object ProjectCodec {
             buses = buses,
             tracks = tracks,
             clips = keptClips,
+            studio = studioFromMap(m["studio"].asObj()),
             markers = m["markers"].asList().map { it.asObj() }.map { MarkerDoc(it.int("id"), it.long("frame"), it.str("name")) },
             loopStart = loop.long("start"), loopEnd = loop.long("end"), loopEnabled = loop.bool("enabled"),
             punchIn = punch.long("in").coerceAtLeast(0), punchOut = punch.long("out").coerceAtLeast(0),
@@ -112,5 +114,34 @@ object ProjectCodec {
             nextId = maxOf(m.int("nextId", 1), maxId + 1),
             created = m.long("created"), modified = m.long("modified")
         )
+    }
+
+    private fun studioToMap(st: StudioDoc): Map<String, Any?> {
+        val s = StudioOps.normalize(st)
+        return linkedMapOf(
+            "beat" to linkedMapOf<String, Any?>(
+                "bars" to s.beat.bars, "swing" to s.beat.swing,
+                "rows" to s.beat.rows.map { linkedMapOf<String, Any?>("voice" to it.voice, "steps" to it.steps, "level" to it.level, "mute" to it.mute) }
+            ),
+            "roll" to linkedMapOf<String, Any?>(
+                "bars" to s.roll.bars, "instrument" to s.roll.instrument,
+                "notes" to s.roll.notes.map { linkedMapOf<String, Any?>("p" to it.pitch, "s" to it.step, "l" to it.length, "v" to it.velocity) }
+            )
+        )
+    }
+
+    /** Missing / damaged studio data falls back to an empty studio instead of failing the whole project. */
+    private fun studioFromMap(m: Map<String, Any?>): StudioDoc {
+        val b = m["beat"].asObj()
+        val r = m["roll"].asObj()
+        val beat = BeatDoc(
+            bars = b.int("bars", 1), swing = b.float("swing", 0f),
+            rows = b["rows"].asList().map { it.asObj() }.map { DrumRowDoc(it.str("voice"), it.str("steps"), it.float("level", 1f), it.bool("mute")) }
+        )
+        val roll = RollDoc(
+            bars = r.int("bars", 2), instrument = r.str("instrument", "piano"),
+            notes = r["notes"].asList().map { it.asObj() }.map { RollNote(it.int("p"), it.int("s"), it.int("l", 1), it.float("v", 0.8f)) }
+        )
+        return StudioOps.normalize(StudioDoc(beat, roll))
     }
 }
