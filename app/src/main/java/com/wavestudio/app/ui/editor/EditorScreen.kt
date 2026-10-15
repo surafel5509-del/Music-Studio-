@@ -48,6 +48,9 @@ fun EditorScreen(
     onOpenMixer: () -> Unit,
     onOpenEffects: (Int) -> Unit,
     onOpenPlugins: () -> Unit,
+    onOpenVoice: () -> Unit = {},
+    onOpenPiano: () -> Unit = {},
+    onImportVideo: () -> Unit = {},
     vm: EditorViewModel = hiltViewModel()
 ) {
     val project by vm.project.collectAsState()
@@ -94,7 +97,7 @@ fun EditorScreen(
                 actions = {
                     IconButton(onClick = { vm.undo() }) { Icon(Icons.Default.Undo, "Undo") }
                     IconButton(onClick = { vm.redo() }) { Icon(Icons.Default.Redo, "Redo") }
-                    IconButton(onClick = { pickAudio.launch(arrayOf("audio/*")) }) { Icon(Icons.Default.FolderOpen, "Import") }
+                    IconButton(onClick = { pickAudio.launch(arrayOf("audio/*","video/*")) }) { Icon(Icons.Default.FolderOpen, "Import") }
                     IconButton(onClick = { vm.save() }) { Icon(Icons.Default.Save, "Save") }
                     IconButton(onClick = onOpenPlugins) { Icon(Icons.Default.Extension, "Plugins") }
                 }
@@ -145,7 +148,8 @@ fun EditorScreen(
                         onLoop = { vm.toggleLoop() },
                         onBpm = { vm.setBpm(it) },
                         onMixer = { showMixer = !showMixer },
-                        onZoomIn = {}, onZoomOut = {}
+                        onZoomIn = {}, onZoomOut = {},
+                        onVoice = onOpenVoice, onPiano = onOpenPiano, onVideoImport = onImportVideo
                     )
                     Box(modifier = Modifier.weight(1f)) {
                         TimelineView(
@@ -194,7 +198,8 @@ fun EditorScreen(
                     onLoop = { vm.toggleLoop() },
                     onBpm = { vm.setBpm(it) },
                     onMixer = { showMixer = !showMixer },
-                    onZoomIn = {}, onZoomOut = {}
+                    onZoomIn = {}, onZoomOut = {},
+                    onVoice = onOpenVoice, onPiano = onOpenPiano, onVideoImport = onImportVideo
                 )
                 Box(modifier = Modifier.weight(1f)) {
                     TimelineView(
@@ -243,7 +248,8 @@ fun EditorScreen(
 fun ToolStrip(
     snap: Boolean, metronome: Boolean, loop: Boolean, bpm: Float,
     onSnap: () -> Unit, onMetronome: () -> Unit, onLoop: () -> Unit,
-    onBpm: (Float) -> Unit, onMixer: () -> Unit, onZoomIn: () -> Unit, onZoomOut: () -> Unit
+    onBpm: (Float) -> Unit, onMixer: () -> Unit, onZoomIn: () -> Unit, onZoomOut: () -> Unit,
+    onVoice: () -> Unit = {}, onPiano: () -> Unit = {}, onVideoImport: () -> Unit = {}
 ) {
     Surface(tonalElevation = 2.dp, modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -255,6 +261,9 @@ fun ToolStrip(
             ToolbarButton(Icons.Default.Timer, "Click", onClick = onMetronome, active = metronome)
             ToolbarButton(Icons.Default.Repeat, "Loop", onClick = onLoop, active = loop)
             ToolbarButton(Icons.Default.Tune, "Mixer", onClick = onMixer)
+            ToolbarButton(Icons.Default.Mic, "Voice", onClick = onVoice)
+            ToolbarButton(Icons.Default.Piano, "Piano", onClick = onPiano)
+            ToolbarButton(Icons.Default.VideoLibrary, "Video", onClick = onVideoImport)
             Spacer(Modifier.weight(1f))
             Text("BPM", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             BpmStepper(bpm = bpm, onValue = onBpm)

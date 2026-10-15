@@ -14,6 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -35,6 +40,9 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit) {
     }
     var selected by remember { mutableStateOf(chain.firstOrNull()) }
     var showBrowser by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(0) } // 0=Rack, 1=Overview
+    val offsets = remember { mutableStateMapOf<Int,Offset>() }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
     Scaffold(
         topBar = {
@@ -47,7 +55,15 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit) {
             )
         }
     ) { pad ->
-        Row(Modifier.padding(pad).fillMaxSize()) {
+        Column(Modifier.padding(pad).fillMaxSize()) {
+            TabRow(selectedTabIndex = mode) {
+                Tab(selected = mode==0, onClick = { mode=0 }, text = { Text("Rack") })
+                Tab(selected = mode==1, onClick = { mode=1 }, text = { Text("Overview (movable/resizable)") })
+            }
+            if (mode == 1) {
+                EffectOverviewPanel(chain, offsets, canvasSize, onResize = { canvasSize = it })
+            } else {
+        Row(Modifier.fillMaxSize()) {
             // Chain list
             LazyColumn(modifier = Modifier.width(200.dp).fillMaxHeight().padding(8.dp)) {
                 items(chain) { slot ->
@@ -84,6 +100,11 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit) {
             // Detail editor
             Box(modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)) {
                 selected?.let { EffectDetail(it) } ?: Text("Select an effect to edit", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+
+            }
             }
         }
     }
@@ -218,4 +239,49 @@ fun iconFor(t: EffectType): ImageVector = when (t) {
     EffectType.TUNER -> Icons.Default.MusicNote
     EffectType.GAIN -> Icons.Default.Tune
     EffectType.INVERT -> Icons.Default.SwapHoriz
+}
+
+@Composable
+fun EffectOverviewPanel(
+    chain: List<EffectSlot>,
+    offsets: MutableMap<Int, Offset>,
+    canvasSize: IntSize,
+    onResize: (IntSize) -> Unit
+) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.6f)).onSizeChanged(onResize)) {
+        chain.forEachIndexed { idx, slot ->
+            val startX = 40.dp + (idx * 160).dp
+            val startY = 80.dp
+            var ox by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+            var oy by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+            var w by remember { androidx.compose.runtime.mutableFloatStateOf(150f) }
+            var h by remember { androidx.compose.runtime.mutableFloatStateOf(90f) }
+            Surface(
+                tonalElevation = 4.dp,
+                shape = MaterialTheme.shapes.medium,
+                color = if (slot.enabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                modifier = Modifier
+                    .offset(startX + ox.dp, startY + oy.dp)
+                    .width(w.dp).height(h.dp)
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            ox += drag.x
+                            oy += drag.y
+                            offsets[idx] = Offset(ox, oy)
+                        }
+                    }
+            ) {
+                Column(Modifier.padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(iconFor(slot.type), null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(slot.name, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(if (slot.enabled) "ENABLED" else "BYPASSED", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
 }

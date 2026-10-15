@@ -48,7 +48,10 @@ fun WaveStudioNavGraph(navController: NavHostController) {
                 onBack = { navController.popBackStack() },
                 onOpenMixer = { navController.navigate(AppDestinations.Mixer.createRoute(pid)) },
                 onOpenEffects = { tid -> navController.navigate(AppDestinations.Effects.createRoute(tid)) },
-                onOpenPlugins = { navController.navigate(AppDestinations.Plugins.route) }
+                onOpenPlugins = { navController.navigate(AppDestinations.Plugins.route) },
+                onOpenVoice = { navController.navigate(AppDestinations.Voice.route) },
+                onOpenPiano = { navController.navigate(AppDestinations.Piano.route) },
+                onImportVideo = { navController.navigate(AppDestinations.FileBrowser.route) }
             )
         }
         composable(AppDestinations.Settings.route) {
