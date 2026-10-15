@@ -53,7 +53,7 @@ fun VoiceToolsScreen(engine: NativeAudioEngine) {
             var exp by remember { mutableStateOf(false) }
             Box {
                 OutlinedButton(onClick = { exp = true }) { Text(autotuneScale) }
-                DropdownMenu(exp, { exp = false }) {
+                DropdownMenu(expanded = exp, onDismissRequest = { exp = false }) {
                     listOf("Chromatic","Major","Minor","Pentatonic","Blues").forEach { s ->
                         DropdownMenuItem(text = { Text(s) }, onClick = { autotuneScale = s; exp = false })
                     }
