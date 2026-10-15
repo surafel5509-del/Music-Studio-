@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -27,6 +28,14 @@ import androidx.compose.ui.unit.sp
 import com.wavestudio.app.ui.theme.WaveStudioTheme
 import kotlin.math.*
 
+/** dB position (0..1, -60 dB..0 dB) of a linear level. NaN / infinite / negative input maps to 0 (never throws). */
+fun levelToUnit(level: Float): Float {
+    if (level.isNaN() || level <= 1e-6f) return 0f
+    if (level.isInfinite()) return 1f
+    return ((20f * log10(level) + 60f) / 60f).coerceIn(0f, 1f)
+}
+
+/** Level meter drawn on a canvas. All inputs are sanitized: a NaN from the engine must never reach layout code. */
 @Composable
 fun VuMeter(
     peak: Float,
@@ -36,68 +45,44 @@ fun VuMeter(
     label: String? = null
 ) {
     val colors = WaveStudioTheme.colors
-    val peakDb = 20f * log10(peak.coerceAtLeast(1e-9f))
-    val rmsDb = 20f * log10(rms.coerceAtLeast(1e-9f))
-    val peakNorm = ((peakDb + 60f) / 60f).coerceIn(0f, 1f)
-    val rmsNorm = ((rmsDb + 60f) / 60f).coerceIn(0f, 1f)
-    val animatedRms by animateFloatAsState(targetValue = rmsNorm, animationSpec = tween(60))
-    val animatedPeak by animateFloatAsState(targetValue = peakNorm, animationSpec = tween(40))
+    val peakNorm = levelToUnit(peak)
+    val rmsNorm = levelToUnit(rms)
+    val animatedRms by animateFloatAsState(targetValue = rmsNorm, animationSpec = tween(60), label = "rms")
+    val animatedPeak by animateFloatAsState(targetValue = peakNorm, animationSpec = tween(40), label = "peak")
+    val back = MaterialTheme.colorScheme.surfaceVariant
+    val good = colors.meterGood; val warn = colors.meterWarn; val bad = colors.meterBad
+    val peakColor = if (peakNorm > 0.97f) bad else if (peakNorm > 0.85f) warn else good
 
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        if (vertical) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(12.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .fillMaxHeight(animatedRms)
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    colors.meterGood,
-                                    colors.meterGood.copy(0.6f)
-                                )
-                            )
-                        )
-                )
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val y = size.height * (1 - animatedPeak)
-                    val c = if (peakNorm > 0.9f) colors.meterBad else if (peakNorm > 0.75f) colors.meterWarn else colors.meterGood
-                    drawLine(c, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
-                }
-            }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(10.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(animatedRms)
-                        .align(Alignment.CenterStart)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(colors.meterGood, colors.meterWarn, colors.meterBad),
-                                endX = 400f
-                            )
-                        )
-                )
+        Canvas(
+            modifier = (if (vertical) Modifier.fillMaxHeight().width(12.dp) else Modifier.fillMaxWidth().height(10.dp))
+                .clip(RoundedCornerShape(3.dp))
+        ) {
+            drawRect(back)
+            val r = animatedRms.coerceIn(0f, 1f); val p = animatedPeak.coerceIn(0f, 1f)
+            if (vertical) {
+                val top = size.height * (1f - r)
+                drawRect(Brush.verticalGradient(listOf(bad, warn, good), startY = 0f, endY = size.height.coerceAtLeast(1f)),
+                    topLeft = Offset(0f, top), size = androidx.compose.ui.geometry.Size(size.width, size.height - top))
+                val y = size.height * (1f - p)
+                drawLine(peakColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx())
+            } else {
+                drawRect(Brush.horizontalGradient(listOf(good, warn, bad), startX = 0f, endX = size.width.coerceAtLeast(1f)),
+                    size = androidx.compose.ui.geometry.Size(size.width * r, size.height))
+                val x = size.width * p
+                drawLine(peakColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx())
             }
         }
         label?.let { Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center) }
     }
 }
 
+/**
+ * Rotary knob: vertical drag (about four knob heights for the full range), double-tap resets to [defaultValue].
+ * The drag handler always works from the *current* value and the *current* callback (the pointer-input block is
+ * created once, so it reads them through rememberUpdatedState; capturing them directly made drags start from a stale
+ * value and send changes to the wrong parameter after the knob was reused for another one).
+ */
 @Composable
 fun Knob(
     value: Float,
@@ -106,11 +91,16 @@ fun Knob(
     onValueChange: (Float) -> Unit,
     label: String? = null,
     size: Dp = 48.dp,
-    formatter: (Float) -> String = { "%.1f".format(it) }
+    formatter: (Float) -> String = { "%.1f".format(it) },
+    defaultValue: Float? = null
 ) {
-    val normalized = ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
-    var startNormalized by remember { mutableFloatStateOf(normalized) }
-    var startY by remember { mutableFloatStateOf(0f) }
+    val span = range.endInclusive - range.start
+    val safeValue = if (value.isNaN()) range.start else value
+    val normalized = if (span > 0f) ((safeValue - range.start) / span).coerceIn(0f, 1f) else 0f
+    val normalizedS = rememberUpdatedState(normalized)
+    val onChangeS = rememberUpdatedState(onValueChange)
+    val rangeS = rememberUpdatedState(range)
+    val defaultS = rememberUpdatedState(defaultValue)
     val knobPrimary = MaterialTheme.colorScheme.primary
     val knobCenter = MaterialTheme.colorScheme.onSurface
 
@@ -122,12 +112,18 @@ fun Knob(
                 .background(MaterialTheme.colorScheme.surfaceVariant)
                 .border(2.dp, MaterialTheme.colorScheme.outline, CircleShape)
                 .pointerInput(Unit) {
+                    detectTapGestures(onDoubleTap = { defaultS.value?.let { d -> onChangeS.value(d) } })
+                }
+                .pointerInput(Unit) {
+                    var start = 0f
                     detectVerticalDragGestures(
-                        onDragStart = { startNormalized = normalized; startY = it.y },
-                        onVerticalDrag = { _, drag ->
-                            val delta = -drag / (this.size.height.toFloat() * 4f)   // fine control: ~4 knob heights for the full range
-                            val n = (startNormalized + delta).coerceIn(0f, 1f)
-                            onValueChange(range.start + n * (range.endInclusive - range.start))
+                        onDragStart = { start = normalizedS.value },
+                        onVerticalDrag = { change, drag ->
+                            val h = this.size.height.toFloat().coerceAtLeast(1f)
+                            start = (start - drag / (h * 4f)).coerceIn(0f, 1f)
+                            val r = rangeS.value
+                            onChangeS.value(r.start + start * (r.endInclusive - r.start))
+                            change.consume()
                         }
                     )
                 }
@@ -137,11 +133,11 @@ fun Knob(
                 val cx = this.size.width / 2
                 val cy = this.size.height / 2
                 val r = this.size.minDimension / 2 - 4.dp.toPx()
-                drawCircle(knobPrimary.copy(alpha = 0.2f), radius = r*0.75f)
+                drawCircle(knobPrimary.copy(alpha = 0.2f), radius = (r * 0.75f).coerceAtLeast(0f))
                 drawLine(
                     knobPrimary,
                     Offset(cx, cy),
-                    Offset(cx + kotlin.math.cos(angle)*r*0.8f, cy + kotlin.math.sin(angle)*r*0.8f),
+                    Offset(cx + kotlin.math.cos(angle) * r * 0.8f, cy + kotlin.math.sin(angle) * r * 0.8f),
                     strokeWidth = 3.dp.toPx()
                 )
                 drawCircle(knobCenter, radius = 3.dp.toPx())
@@ -150,7 +146,7 @@ fun Knob(
         label?.let {
             Text(it, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text(formatter(value), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
+        Text(formatter(safeValue), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

@@ -628,3 +628,56 @@ class AuxBusTest {
         assertTrue("send $t 0 0.3" in e.calls)
     }
 }
+
+class TimelineMathTest {
+    @Test fun zoomIsClampedAndNanSafe() {
+        assertEquals(TimelineMath.MAX_ZOOM, TimelineMath.clampZoom(1e9f), 0f)
+        assertEquals(TimelineMath.MIN_ZOOM, TimelineMath.clampZoom(-5f), 0f)
+        assertEquals(100f, TimelineMath.clampZoom(Float.NaN), 0f)
+        assertEquals(TimelineMath.MAX_ZOOM, TimelineMath.clampZoom(Float.POSITIVE_INFINITY), 0f)
+    }
+    @Test fun zoomAroundKeepsAnchorTimeFixed() {
+        val total = 48000L * 600
+        val (z1, s1) = TimelineMath.zoomAround(100f, 1000f, 300f, 2f, total, 1000f)
+        assertEquals(200f, z1, 1e-3f)
+        assertEquals((1000f + 300f) / 100f, (s1 + 300f) / z1, 1e-3f)
+    }
+    @Test fun zoomAroundSurvivesBadInput() {
+        val (z, s) = TimelineMath.zoomAround(Float.NaN, Float.NaN, Float.NaN, Float.NaN, -5L, 0f)
+        assertTrue(!z.isNaN() && !s.isNaN() && s >= 0f)
+        val (z2, _) = TimelineMath.zoomAround(100f, 0f, 10f, 0f, 1000L, 800f)       // factor 0 -> unchanged
+        assertEquals(100f, z2, 1e-3f)
+        val (z3, s3) = TimelineMath.zoomAround(5000f, 0f, 10f, 100f, 48000L * 10, 800f)
+        assertEquals(TimelineMath.MAX_ZOOM, z3, 0f); assertTrue(s3 <= TimelineMath.maxScroll(48000L * 10, z3, 800f))
+    }
+    @Test fun scrollNeverLeavesContent() {
+        assertEquals(0f, TimelineMath.clampScroll(-50f, 48000L * 10, 100f, 800f), 0f)
+        assertEquals(1000f - 400f, TimelineMath.clampScroll(1e9f, 48000L * 10, 100f, 800f), 1e-3f)
+        assertEquals(0f, TimelineMath.clampScroll(5f, 0L, 100f, 800f), 0f)
+        assertEquals(0f, TimelineMath.clampScrollY(500f, 2, 84f, 400f), 0f)
+        assertEquals(68f, TimelineMath.clampScrollY(500f, 6, 84f, 436f), 1e-3f)
+    }
+    @Test fun fitZoomShowsTheWholeProject() {
+        val z = TimelineMath.fitZoom(48000L * 120, 900f)
+        assertTrue(z * 120f <= 900f && z * 120f > 700f)
+        assertTrue(TimelineMath.fitZoom(0L, 900f) in TimelineMath.MIN_ZOOM..TimelineMath.MAX_ZOOM)
+    }
+    @Test fun visibleBeatsAreBounded() {
+        assertTrue(TimelineMath.visibleBeats(0f, 1000f, 0f).isEmpty())
+        assertTrue(TimelineMath.visibleBeats(Float.NaN, 1000f, Float.NaN).isEmpty())
+        val r = TimelineMath.visibleBeats(0f, 1e12f, 0.001f)
+        assertTrue(r.last - r.first <= 4000)
+        assertEquals(2, TimelineMath.visibleBeats(100f, 100f, 100f).first + 1)
+    }
+    @Test fun rulerStepsAndLabels() {
+        assertEquals(1f, TimelineMath.rulerStepSeconds(100f), 0f)
+        assertEquals(60f, TimelineMath.rulerStepSeconds(2f), 0f)
+        assertEquals("1:05", TimelineMath.timeLabel(65f)); assertEquals("0:00", TimelineMath.timeLabel(Float.NaN))
+        assertEquals("0:00.5", TimelineMath.timeLabel(0.5f))
+    }
+    @Test fun frameAtIsTotal() {
+        assertEquals(48000L, TimelineMath.frameAt(100f, 0f, 100f))
+        assertEquals(0L, TimelineMath.frameAt(-500f, 0f, 100f)); assertEquals(0L, TimelineMath.frameAt(Float.NaN, Float.NaN, Float.NaN))
+        val (a, b) = TimelineMath.clipSpan(-1e9f, 1e9f, 800f); assertEquals(-24f, a, 0f); assertEquals(824f, b, 0f)
+    }
+}

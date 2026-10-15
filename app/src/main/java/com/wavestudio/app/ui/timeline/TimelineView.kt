@@ -8,6 +8,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -22,7 +23,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
@@ -30,6 +35,7 @@ import androidx.compose.ui.unit.sp
 import com.wavestudio.app.project.ClipDoc
 import com.wavestudio.app.project.MarkerDoc
 import com.wavestudio.app.project.TIMELINE_RATE
+import com.wavestudio.app.project.TimelineMath
 import com.wavestudio.app.project.TrackDoc
 import com.wavestudio.app.ui.editor.PeakData
 import com.wavestudio.app.ui.theme.WaveStudioTheme
@@ -76,6 +82,10 @@ fun TimelineView(
     onTrimEnd: (clipId: Int, frame: Long) -> Unit = { _, _ -> }
 ) {
     var scrollX by remember { mutableFloatStateOf(0f) }
+    // The zoom the gestures and the renderer actually use. It is updated immediately by pinch gestures (so repeated
+    // events in one frame compound correctly) and follows [zoom] when the +/- buttons change it.
+    val zoomLive = remember { mutableFloatStateOf(TimelineMath.clampZoom(zoom)) }
+    var viewW by remember { mutableFloatStateOf(0f) }
 
     val colors = WaveStudioTheme.colors
     val surfaceColor = MaterialTheme.colorScheme.surface
@@ -91,7 +101,6 @@ fun TimelineView(
     val trackHeightDp = 84f
 
     // Latest values for the gesture coroutine (it is created once).
-    val zoomS = rememberUpdatedState(zoom)
     val scrollY = scrollYState.floatValue
     val tracksS = rememberUpdatedState(tracks)
     val clipsS = rememberUpdatedState(clips)
@@ -103,21 +112,32 @@ fun TimelineView(
     val onTrimStartS = rememberUpdatedState(onTrimStart)
     val onTrimEndS = rememberUpdatedState(onTrimEnd)
 
+    LaunchedEffect(zoom) {
+        val target = TimelineMath.clampZoom(zoom)
+        val cur = zoomLive.floatValue
+        if (!TimelineMath.approxEquals(target, cur, target * 1e-4f)) {
+            // button zoom: keep the centre of the view fixed
+            val (nz, ns) = TimelineMath.zoomAround(cur, scrollX, viewW / 2f, target / cur, totalS.value, viewW)
+            zoomLive.floatValue = nz
+            scrollX = ns
+            if (!TimelineMath.approxEquals(nz, zoom, nz * 1e-4f)) onZoomS.value(nz)
+        }
+    }
+
     Canvas(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged { viewW = it.width.toFloat() }
             .pointerInput(Unit) {
                 val slop = viewConfiguration.touchSlop
                 val rulerH = 28.dp.toPx()
                 val trackH = trackHeightDp.dp.toPx()
                 val edge = 18.dp.toPx()
-                fun frameAt(x: Float): Long = (((x + scrollX) / zoomS.value) * rate).toLong().coerceAtLeast(0L)
+                fun frameAt(x: Float): Long = TimelineMath.frameAt(x, scrollX, zoomLive.floatValue, rate)
                 fun trackIndexAt(y: Float): Int = floor((y - rulerH + scrollYState.floatValue) / trackH).toInt()
                 fun clampScroll() {
-                    val contentW = totalS.value / rate * zoomS.value
-                    scrollX = scrollX.coerceIn(0f, max(0f, contentW - size.width * 0.5f))
-                    val contentH = tracksS.value.size * trackH
-                    scrollYState.floatValue = scrollYState.floatValue.coerceIn(0f, max(0f, contentH - (size.height - rulerH)))
+                    scrollX = TimelineMath.clampScroll(scrollX, totalS.value, zoomLive.floatValue, size.width.toFloat())
+                    scrollYState.floatValue = TimelineMath.clampScrollY(scrollYState.floatValue, tracksS.value.size, trackH, size.height - rulerH)
                 }
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -134,8 +154,8 @@ fun TimelineView(
                             val c = clipsS.value.lastOrNull { it.trackId == track.id && f >= it.startFrame && f < it.endFrame }
                             if (c != null) {
                                 hitClip = c
-                                val sx = (c.startFrame / rate * zoomS.value) - scrollX
-                                val ex = (c.endFrame / rate * zoomS.value) - scrollX
+                                val sx = (c.startFrame / rate * zoomLive.floatValue) - scrollX
+                                val ex = (c.endFrame / rate * zoomLive.floatValue) - scrollX
                                 val e = min(edge, (ex - sx) / 3f)
                                 kind = when {
                                     down.position.x - sx < e -> 2
@@ -156,14 +176,14 @@ fun TimelineView(
                             multi = true
                             val zc = event.calculateZoom()
                             val pan = event.calculatePan()
-                            if (zc != 1f) {
-                                val newZoom = (zoomS.value * zc).coerceIn(5f, 4000f)
+                            if (zc != 1f && zc.isFinite() && zc > 0f) {
                                 val anchor = event.changes.map { it.position.x }.average().toFloat()
-                                val secAtAnchor = (anchor + scrollX) / zoomS.value
-                                onZoomS.value(newZoom)
-                                scrollX = secAtAnchor * newZoom - anchor
+                                val (nz, ns) = TimelineMath.zoomAround(zoomLive.floatValue, scrollX, anchor, zc, totalS.value, size.width.toFloat())
+                                zoomLive.floatValue = nz
+                                scrollX = ns
+                                onZoomS.value(nz)
                             }
-                            scrollX -= pan.x; scrollYState.floatValue -= pan.y
+                            if (pan.x.isFinite() && pan.y.isFinite()) { scrollX -= pan.x; scrollYState.floatValue -= pan.y }
                             clampScroll()
                             event.changes.forEach { it.consume() }
                         } else if (!multi) {
@@ -203,6 +223,8 @@ fun TimelineView(
     ) {
         val w = size.width
         val h = size.height
+        val zoom = zoomLive.floatValue
+        val scX = TimelineMath.clampScroll(scrollX, totalFrames, zoom, w)
         val rulerH = 28.dp.toPx()
         val trackH = trackHeightDp.dp.toPx()
         drawRect(surfaceColor)
@@ -211,38 +233,38 @@ fun TimelineView(
         val secPerBeat = 60f / bpm.coerceAtLeast(1f)
         val beatPx = secPerBeat * zoom
         val barPx = beatPx * beatsPerBar
-        val firstBeat = max(0, floor(scrollX / beatPx).toInt())
-        val lastBeat = ceil((scrollX + w) / beatPx).toInt()
+        val beats = TimelineMath.visibleBeats(scX, w, beatPx)
         val labelEvery = max(1, ceil(56f / barPx).toInt())
         drawRect(colors.grid.copy(alpha = 0.5f), size = Size(w, rulerH))
-        if (beatPx > 6f) for (b in firstBeat..lastBeat) {
-            val x = b * beatPx - scrollX
+        if (beatPx > 6f) for (b in beats) {
+            val x = b * beatPx - scX
             val bar = b % beatsPerBar == 0
             if (!bar && beatPx < 14f) continue
             drawLine(colors.grid.copy(alpha = if (bar) 0.7f else 0.3f), Offset(x, if (bar) 0f else rulerH * 0.6f), Offset(x, h), strokeWidth = if (bar) 1.dp.toPx() else 0.5.dp.toPx())
             if (bar) {
                 val barNo = b / beatsPerBar
-                if (barNo % labelEvery == 0) drawText(measurer, "${barNo + 1}", Offset(x + 3.dp.toPx(), 2.dp.toPx()), style = labelStyle)
+                if (barNo % labelEvery == 0) safeText(measurer, "${barNo + 1}", x + 3.dp.toPx(), 2.dp.toPx(), labelStyle, 60.dp.toPx())
             }
         } else {
-            // zoomed far out: one line per second block
-            val step = 10f * ceil(60f / (10f * zoom)).coerceAtLeast(1f)
-            var s = floor(scrollX / zoom / step) * step
-            while (s * zoom - scrollX < w) {
-                val x = s * zoom - scrollX
+            // zoomed far out: one line per 'nice' time step
+            val step = TimelineMath.rulerStepSeconds(zoom)
+            var sec = floor(scX / zoom / step) * step
+            var guard = 0
+            while (sec * zoom - scX < w && guard++ < 600) {
+                val x = sec * zoom - scX
                 drawLine(colors.grid.copy(alpha = 0.5f), Offset(x, 0f), Offset(x, h), strokeWidth = 1.dp.toPx())
-                drawText(measurer, "${(s / 60).toInt()}:%02d".format((s % 60).toInt()), Offset(x + 3.dp.toPx(), 2.dp.toPx()), style = labelStyle)
-                s += step
+                safeText(measurer, TimelineMath.timeLabel(sec), x + 3.dp.toPx(), 2.dp.toPx(), labelStyle, 60.dp.toPx())
+                sec += step
             }
         }
 
         // ---- loop region
         if (loopEnd > loopStart) {
-            val lx = loopStart / rate * zoom - scrollX
-            val rx = loopEnd / rate * zoom - scrollX
+            val lx = loopStart / rate * zoom - scX
+            val rx = loopEnd / rate * zoom - scX
             drawRect(
                 (if (loopEnabled) colors.playhead else onSurface).copy(alpha = if (loopEnabled) 0.18f else 0.06f),
-                topLeft = Offset(lx, 0f), size = Size(rx - lx, rulerH)
+                topLeft = Offset(max(lx, -24f), 0f), size = Size(max(0f, min(rx, w + 24f) - max(lx, -24f)), rulerH)
             )
             if (loopEnabled) {
                 drawLine(colors.playhead, Offset(lx, 0f), Offset(lx, h), strokeWidth = 1.dp.toPx())
@@ -252,20 +274,20 @@ fun TimelineView(
 
         // ---- punch range (only this part of a take is written while recording)
         if (punchEnabled && punchOut > punchIn) {
-            val px0 = punchIn / rate * zoom - scrollX
-            val px1 = punchOut / rate * zoom - scrollX
-            drawRect(errorColor.copy(alpha = 0.10f), topLeft = Offset(px0, rulerH), size = Size(px1 - px0, h - rulerH))
-            drawRect(errorColor.copy(alpha = 0.45f), topLeft = Offset(px0, 0f), size = Size(px1 - px0, rulerH * 0.35f))
+            val px0 = punchIn / rate * zoom - scX
+            val px1 = punchOut / rate * zoom - scX
+            drawRect(errorColor.copy(alpha = 0.10f), topLeft = Offset(max(px0, -24f), rulerH), size = Size(max(0f, min(px1, w + 24f) - max(px0, -24f)), h - rulerH))
+            drawRect(errorColor.copy(alpha = 0.45f), topLeft = Offset(max(px0, -24f), 0f), size = Size(max(0f, min(px1, w + 24f) - max(px0, -24f)), rulerH * 0.35f))
             drawLine(errorColor, Offset(px0, 0f), Offset(px0, h), strokeWidth = 1.5.dp.toPx())
             drawLine(errorColor, Offset(px1, 0f), Offset(px1, h), strokeWidth = 1.5.dp.toPx())
         }
 
         // ---- markers
         markers.forEach { m ->
-            val x = m.frame / rate * zoom - scrollX
+            val x = m.frame / rate * zoom - scX
             if (x < -80f || x > w) return@forEach
             drawLine(markerColor.copy(alpha = 0.8f), Offset(x, 0f), Offset(x, h), strokeWidth = 1.dp.toPx())
-            drawText(measurer, m.name, Offset(x + 3.dp.toPx(), rulerH * 0.45f), style = labelStyle.copy(color = markerColor), maxLines = 1)
+            safeText(measurer, m.name, x + 3.dp.toPx(), rulerH * 0.45f, labelStyle.copy(color = markerColor), 90.dp.toPx())
         }
 
         // ---- track lanes
@@ -284,18 +306,21 @@ fun TimelineView(
         val trackIndex = tracks.withIndex().associate { it.value.id to it.index }
         clips.forEach { clip ->
             val ti = trackIndex[clip.trackId] ?: return@forEach
-            val x = clip.startFrame / rate * zoom - scrollX
+            val x = clip.startFrame / rate * zoom - scX
             val cw = clip.lengthFrames / rate * zoom
             val y = rulerH + ti * trackH - scrollY + 2.dp.toPx()
             val ch = trackH - 4.dp.toPx()
-            if (x + cw < 0 || x > w || y + ch < rulerH || y > h) return@forEach
+            if (!x.isFinite() || !cw.isFinite() || x + cw < 0 || x > w || y + ch < rulerH || y > h) return@forEach
+            // Only the visible part (plus a margin) is handed to the renderer: at high zoom a clip is millions of px wide.
+            val (vx0, vx1) = TimelineMath.clipSpan(x, x + cw, w)
+            val vw = max(vx1 - vx0, 3f)
             val base = palette[ti % palette.size]
             val selected = selectedClipId == clip.id
             val missing = clip.media in missingMedia
             val corner = CornerRadius(4.dp.toPx(), 4.dp.toPx())
             drawRoundRect(
                 color = (if (missing) errorColor else base).copy(alpha = if (selected) 0.75f else 0.5f),
-                topLeft = Offset(x, y), size = Size(max(cw, 3f), ch), cornerRadius = corner
+                topLeft = Offset(vx0, y), size = Size(vw, ch), cornerRadius = corner
             )
 
             // Waveform from real audio data
@@ -326,33 +351,49 @@ fun TimelineView(
                 }
             }
             if (selected) {
-                drawRoundRect(Color.White, topLeft = Offset(x, y), size = Size(max(cw, 3f), ch), cornerRadius = corner, style = Stroke(width = 2.dp.toPx()))
+                drawRoundRect(Color.White, topLeft = Offset(vx0, y), size = Size(vw, ch), cornerRadius = corner, style = Stroke(width = 2.dp.toPx()))
                 // trim handles
-                drawRect(Color.White, topLeft = Offset(x, y), size = Size(4.dp.toPx(), ch))
-                drawRect(Color.White, topLeft = Offset(x + cw - 4.dp.toPx(), y), size = Size(4.dp.toPx(), ch))
+                if (x >= -24f) drawRect(Color.White, topLeft = Offset(x, y), size = Size(4.dp.toPx(), ch))
+                if (x + cw <= w + 24f) drawRect(Color.White, topLeft = Offset(x + cw - 4.dp.toPx(), y), size = Size(4.dp.toPx(), ch))
             }
             // fade ramps
             if (clip.fadeInFrames > 0) {
                 val fw = clip.fadeInFrames / rate * zoom
+                if (fw < 20000f)
                 drawLine(Color.White.copy(alpha = 0.8f), Offset(x, y + ch), Offset(x + fw, y), strokeWidth = 1.dp.toPx())
             }
             if (clip.fadeOutFrames > 0) {
                 val fw = clip.fadeOutFrames / rate * zoom
+                if (fw < 20000f)
                 drawLine(Color.White.copy(alpha = 0.8f), Offset(x + cw - fw, y), Offset(x + cw, y + ch), strokeWidth = 1.dp.toPx())
             }
             if (cw > 40f) {
                 val label = (if (missing) "MISSING: " else "") + clip.name
-                drawText(measurer, label, Offset(max(x, 0f) + 6.dp.toPx(), y + 2.dp.toPx()), style = clipLabelStyle, maxLines = 1)
+                val lx = max(x, 0f) + 6.dp.toPx()
+                safeText(measurer, label, lx, y + 2.dp.toPx(), clipLabelStyle, min(x + cw, w) - lx - 4.dp.toPx())
             }
         }
 
         // ---- playhead
-        val phX = playheadFrames / rate * zoom - scrollX
+        val phX = playheadFrames / rate * zoom - scX
         if (phX in -10f..(w + 10f)) {
             drawLine(colors.playhead, Offset(phX, 0f), Offset(phX, h), strokeWidth = 2.dp.toPx())
             drawCircle(colors.playhead, radius = 6.dp.toPx(), center = Offset(phX, 12.dp.toPx()))
         }
     }
+}
+
+/**
+ * Draws one line of text inside an explicit, always-positive box. (Without an explicit size the text layout takes the
+ * remaining canvas width, which can be negative for labels near the right edge and makes the layout throw.)
+ */
+private fun DrawScope.safeText(measurer: TextMeasurer, text: String, x: Float, y: Float, style: TextStyle, maxWidth: Float) {
+    val avail = min(maxWidth, size.width - x)
+    if (!(avail >= 6f) || x < -4000f || y < -4f || y > size.height) return
+    try {
+        drawText(measurer, text, Offset(x, y), style = style, overflow = TextOverflow.Ellipsis, maxLines = 1,
+            size = Size(avail, 28f * density.coerceAtLeast(1f)))
+    } catch (_: IllegalArgumentException) { /* a label that cannot be laid out is skipped, never fatal */ }
 }
 
 /** Height of one track lane in dp (the track header list uses the same value so rows line up). */

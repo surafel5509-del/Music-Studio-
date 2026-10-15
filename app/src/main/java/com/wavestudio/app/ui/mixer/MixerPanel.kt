@@ -17,12 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -37,6 +37,7 @@ import com.wavestudio.app.engine.MasterMeters
 import com.wavestudio.app.project.BusDoc
 import com.wavestudio.app.project.TrackDoc
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.getValue
@@ -53,11 +54,11 @@ private const val FADER_MIN_DB = -60f
 private const val FADER_MAX_DB = 6f
 
 private fun gainToPos(g: Float): Float =
-    if (g <= 0.001f) 0f else ((20f * log10(g) - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).coerceIn(0f, 1f)
+    if (g.isNaN() || g <= 0.001f) 0f else ((20f * log10(g) - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).coerceIn(0f, 1f)
 private fun posToGain(p: Float): Float =
     if (p <= 0.004f) 0f else 10f.pow((FADER_MIN_DB + p * (FADER_MAX_DB - FADER_MIN_DB)) / 20f)
 
-fun gainLabel(g: Float): String = if (g <= 0.001f) "-inf" else "%.1f".format(20f * log10(g))
+fun gainLabel(g: Float): String = if (g.isNaN() || g <= 0.001f) "-inf" else "%.1f".format(20f * log10(g))
 
 /** Mixer: one strip per track + master. Meter levels are the real per-track and master peaks from the engine. */
 @Composable
@@ -136,17 +137,18 @@ fun ChannelStrip(track: TrackDoc, peak: Float, onVolume: (Float) -> Unit, onPan:
             Text(track.name, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             Box(Modifier.width(24.dp).height(3.dp).background(color))
             Spacer(Modifier.height(2.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                FilterChip(selected = track.mute, onClick = onMute, label = { Text("M", fontSize = 9.sp) })
-                FilterChip(selected = track.solo, onClick = onSolo, label = { Text("S", fontSize = 9.sp) })
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                MiniToggle("M", track.mute, MaterialTheme.colorScheme.error, onMute)
+                MiniToggle("S", track.solo, MaterialTheme.colorScheme.tertiary, onSolo)
             }
+            Spacer(Modifier.height(2.dp))
             TextButton(onClick = onEffects, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Text(if (track.effects.isEmpty()) "FX" else "FX (${track.effects.size})", fontSize = 10.sp)
             }
             TextButton(onClick = onSends, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Text(if (sendCount == 0) "SEND" else "SEND ($sendCount)", fontSize = 10.sp)
             }
-            Knob(value = track.pan, range = -1f..1f, label = "PAN", size = 36.dp, onValueChange = onPan,
+            Knob(value = track.pan, range = -1f..1f, label = "PAN", size = 32.dp, onValueChange = onPan, defaultValue = 0f,
                 formatter = { if (abs(it) < 0.05f) "C" else if (it < 0) "L${(-it * 100).toInt()}" else "R${(it * 100).toInt()}" })
             Spacer(Modifier.height(4.dp))
             Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -156,6 +158,17 @@ fun ChannelStrip(track: TrackDoc, peak: Float, onVolume: (Float) -> Unit, onPan:
             Text("${gainLabel(track.volume)} dB", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/** Compact mute/solo style toggle (22 dp: a Material chip is 32 dp tall and squeezed the fader out of short strips). */
+@Composable
+fun MiniToggle(text: String, on: Boolean, onColor: Color, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick, shape = MaterialTheme.shapes.extraSmall,
+        color = if (on) onColor else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (on) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(26.dp, 22.dp)
+    ) { Box(contentAlignment = Alignment.Center) { Text(text, fontSize = 11.sp, fontWeight = FontWeight.Bold) } }
 }
 
 /** Aux bus return: the summed (post-fader) sends go through the bus effect chain and come back at this level. */
@@ -169,7 +182,7 @@ fun BusStrip(bus: BusDoc, onLevel: (Float) -> Unit, onEffects: () -> Unit, onRem
             TextButton(onClick = onEffects, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Text(if (bus.effects.isEmpty()) "FX" else "FX (${bus.effects.size})", fontSize = 10.sp)
             }
-            Knob(value = bus.level, range = 0f..2f, label = "RETURN", size = 36.dp, onValueChange = onLevel,
+            Knob(value = bus.level, range = 0f..2f, label = "RETURN", size = 36.dp, onValueChange = onLevel, defaultValue = 1f,
                 formatter = { gainLabel(it) + " dB" })
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onRemove, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
@@ -199,34 +212,37 @@ fun MasterStrip(meters: MasterMeters, volume: Float, onVolume: (Float) -> Unit, 
     }
 }
 
-/** Vertical fader with a dB taper (-60 … +6 dB). Double-tap resets to 0 dB. */
+/** Vertical fader with a dB taper (-60 … +6 dB). Double-tap resets to 0 dB. Safe for zero-size layouts and NaN. */
 @Composable
 fun VerticalFader(value: Float, onValue: (Float) -> Unit, modifier: Modifier = Modifier) {
     val track = MaterialTheme.colorScheme.surfaceVariant
     val fill = MaterialTheme.colorScheme.primary
     val unity = MaterialTheme.colorScheme.onSurfaceVariant
-    val pos = gainToPos(value)
+    val onValueS = rememberUpdatedState(onValue)
+    val pos = gainToPos(if (value.isNaN()) 0f else value)
+    fun emit(y: Float, h: Int) {
+        if (h <= 0 || y.isNaN()) return
+        onValueS.value(posToGain((1f - y / h).coerceIn(0f, 1f)))
+    }
     Canvas(
         modifier = modifier
             .pointerInput(Unit) {
-                detectVerticalDragGestures { change, _ ->
-                    val p = (1f - change.position.y / size.height).coerceIn(0f, 1f)
-                    onValue(posToGain(p)); change.consume()
-                }
+                detectVerticalDragGestures { change, _ -> emit(change.position.y, size.height); change.consume() }
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onDoubleTap = { onValue(1f) },
-                    onTap = { o -> onValue(posToGain((1f - o.y / size.height).coerceIn(0f, 1f))) }
+                    onDoubleTap = { onValueS.value(1f) },
+                    onTap = { o -> emit(o.y, size.height) }
                 )
             }
     ) {
+        if (size.width <= 0f || size.height <= 0f) return@Canvas
         val cx = size.width / 2
         drawRoundRect(track, topLeft = Offset(cx - 3.dp.toPx(), 0f), size = Size(6.dp.toPx(), size.height), cornerRadius = CornerRadius(3.dp.toPx()))
         val zeroY = size.height * (1f - gainToPos(1f))
         drawLine(unity, Offset(cx - 9.dp.toPx(), zeroY), Offset(cx + 9.dp.toPx(), zeroY), strokeWidth = 1.dp.toPx())
         val y = size.height * (1f - pos)
-        drawRoundRect(fill, topLeft = Offset(cx - 3.dp.toPx(), y), size = Size(6.dp.toPx(), size.height - y), cornerRadius = CornerRadius(3.dp.toPx()))
+        drawRoundRect(fill, topLeft = Offset(cx - 3.dp.toPx(), y), size = Size(6.dp.toPx(), (size.height - y).coerceAtLeast(0f)), cornerRadius = CornerRadius(3.dp.toPx()))
         drawRoundRect(Color.White, topLeft = Offset(cx - 12.dp.toPx(), y - 6.dp.toPx()), size = Size(24.dp.toPx(), 12.dp.toPx()), cornerRadius = CornerRadius(3.dp.toPx()))
         drawLine(Color.DarkGray, Offset(cx - 12.dp.toPx(), y), Offset(cx + 12.dp.toPx(), y), strokeWidth = 1.5f)
     }

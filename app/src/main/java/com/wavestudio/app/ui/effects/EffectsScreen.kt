@@ -169,7 +169,7 @@ private fun EffectDetail(fx: EffectDoc, vm: EffectsViewModel, onRemoved: () -> U
                     Knob(
                         value = v, range = p.min..p.max, label = p.name, size = 56.dp,
                         formatter = { "%.2f".format(it) + if (p.unit.isNotEmpty()) " ${p.unit}" else "" },
-                        onValueChange = { vm.setParam(fx.id, p.id, it) }
+                        onValueChange = { vm.setParam(fx.id, p.id, it) }, defaultValue = p.def
                     )
                 }
             }

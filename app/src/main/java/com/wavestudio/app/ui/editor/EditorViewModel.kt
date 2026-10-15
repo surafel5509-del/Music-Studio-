@@ -143,8 +143,8 @@ class EditorViewModel @Inject constructor(
     fun addTrack() { session.edit("Add track") { EditOps.addTrack(it).first } }
     fun removeTrack(id: Int) { session.edit("Remove track") { EditOps.removeTrack(it, id) }; if (_armedTrack.value == id) _armedTrack.value = null }
     fun renameTrack(id: Int, name: String) { session.edit("Rename track") { EditOps.updateTrack(it, id) { t -> t.copy(name = name.take(40)) } } }
-    fun setTrackVolume(id: Int, v: Float) { session.edit("Volume", "vol:$id") { EditOps.updateTrack(it, id) { t -> t.copy(volume = v.coerceIn(0f, 4f)) } } }
-    fun setTrackPan(id: Int, p: Float) { session.edit("Pan", "pan:$id") { EditOps.updateTrack(it, id) { t -> t.copy(pan = p.coerceIn(-1f, 1f)) } } }
+    fun setTrackVolume(id: Int, v: Float) { if (v.isNaN()) return; session.edit("Volume", "vol:$id") { EditOps.updateTrack(it, id) { t -> t.copy(volume = v.coerceIn(0f, 4f)) } } }
+    fun setTrackPan(id: Int, p: Float) { if (p.isNaN()) return; session.edit("Pan", "pan:$id") { EditOps.updateTrack(it, id) { t -> t.copy(pan = p.coerceIn(-1f, 1f)) } } }
     fun toggleMute(id: Int) { session.edit("Mute") { EditOps.updateTrack(it, id) { t -> t.copy(mute = !t.mute) } } }
     fun toggleSolo(id: Int) { session.edit("Solo") { EditOps.updateTrack(it, id) { t -> t.copy(solo = !t.solo) } } }
     fun toggleArm(id: Int) { _armedTrack.value = if (_armedTrack.value == id) null else id }
@@ -152,7 +152,7 @@ class EditorViewModel @Inject constructor(
     fun removeBus(index: Int) { session.edit("Remove aux bus") { EditOps.removeBus(it, index) } }
     fun setBusLevel(index: Int, v: Float) { session.edit("Bus level", "bus:$index") { EditOps.setBusLevel(it, index, v) } }
     fun setTrackSend(trackId: Int, bus: Int, v: Float) { session.edit("Send level", "send:$trackId:$bus") { EditOps.setTrackSend(it, trackId, bus, v) } }
-    fun setMasterVolume(v: Float) { session.edit("Master volume", "master") { it.copy(masterVolume = v.coerceIn(0f, 2f)) } }
+    fun setMasterVolume(v: Float) { if (v.isNaN()) return; session.edit("Master volume", "master") { it.copy(masterVolume = v.coerceIn(0f, 2f)) } }
 
     // ------------------------------------------------------------------ clips
 

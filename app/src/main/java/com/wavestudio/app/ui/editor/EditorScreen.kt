@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.filled.FitScreen
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
@@ -99,6 +100,7 @@ import com.wavestudio.app.engine.MasterMeters
 import com.wavestudio.app.engine.TransportState
 import com.wavestudio.app.project.MarkerDoc
 import com.wavestudio.app.project.TIMELINE_RATE
+import com.wavestudio.app.project.TimelineMath
 import com.wavestudio.app.project.TrackDoc
 import com.wavestudio.app.session.ExportOptions
 import com.wavestudio.app.session.ExportState
@@ -149,6 +151,7 @@ fun EditorScreen(
     val isWide = config.screenWidthDp >= 600
     val rate = TIMELINE_RATE.toFloat()
 
+    val density = androidx.compose.ui.platform.LocalDensity.current
     var zoom by rememberSaveable { mutableStateOf(100f) }
     val scrollY = remember { mutableFloatStateOf(0f) }
     var showMixer by rememberSaveable { mutableStateOf(false) }
@@ -236,8 +239,11 @@ fun EditorScreen(
                     ToolbarButton(Icons.Default.GridOn, "Snap", onClick = { vm.setSnap(!snap) }, active = snap)
                     ToolbarButton(Icons.Default.Tune, "Mixer", onClick = { showMixer = !showMixer }, active = showMixer)
                     ToolbarButton(Icons.Default.Timer, "Meters", onClick = { showAnalyzer = !showAnalyzer }, active = showAnalyzer)
-                    ToolbarButton(Icons.Default.ZoomOut, "Zoom −", onClick = { zoom = (zoom / 1.5f).coerceAtLeast(5f) })
-                    ToolbarButton(Icons.Default.ZoomIn, "Zoom +", onClick = { zoom = (zoom * 1.5f).coerceAtMost(4000f) })
+                    ToolbarButton(Icons.Default.ZoomOut, "Zoom −", onClick = { zoom = TimelineMath.clampZoom(zoom / 1.5f) })
+                    ToolbarButton(Icons.Default.ZoomIn, "Zoom +", onClick = { zoom = TimelineMath.clampZoom(zoom * 1.5f) })
+                    ToolbarButton(Icons.Default.FitScreen, "Fit", onClick = {
+                        zoom = TimelineMath.fitZoom(doc.endFrame, (config.screenWidthDp - 110) * density.density)
+                    })
                     Text("BPM", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 8.dp))
                     BpmStepper(bpm = doc.bpm, onValue = vm::setBpm)
                     Spacer(Modifier.width(8.dp))
@@ -317,7 +323,7 @@ fun EditorScreen(
                 }
             }
             if (showMixer) {
-                Box(Modifier.fillMaxWidth().height(230.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                Box(Modifier.fillMaxWidth().height(260.dp).background(MaterialTheme.colorScheme.surfaceVariant)) {
                     MixerPanel(
                         tracks = doc.tracks, trackMeters = trackMeters, master = meters, masterVolume = doc.masterVolume,
                         onVolume = vm::setTrackVolume, onPan = vm::setTrackPan, onMute = vm::toggleMute, onSolo = vm::toggleSolo,
