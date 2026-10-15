@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             required.add(Manifest.permission.POST_NOTIFICATIONS)
             required.add(Manifest.permission.READ_MEDIA_AUDIO)
+            required.add(Manifest.permission.READ_MEDIA_VIDEO)
         } else {
             required.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
