@@ -45,7 +45,7 @@ fun VoiceToolsScreen(engine: NativeAudioEngine) {
         Text("AutoTune", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Correction", Modifier.width(120.dp))
-            Slider(autotuneStrength, { autotuneStrength = it }, valueRange = 0f..100f, Modifier.weight(1f))
+            Slider(value = autotuneStrength, onValueChange = { autotuneStrength = it }, valueRange = 0f..100f, modifier = Modifier.weight(1f))
             Text("${autotuneStrength.roundToInt()}%", Modifier.width(48.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -70,36 +70,36 @@ fun VoiceToolsScreen(engine: NativeAudioEngine) {
         Text("Voice Up / Down (Pitch Shift)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Semitones", Modifier.width(120.dp))
-            Slider(pitchSemitones, { pitchSemitones = it }, valueRange = -12f..12f, Modifier.weight(1f))
+            Slider(value = pitchSemitones, onValueChange = { pitchSemitones = it }, valueRange = -12f..12f, modifier = Modifier.weight(1f))
             Text(String.format("%+.0f", pitchSemitones), Modifier.width(48.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Formant", Modifier.width(120.dp))
-            Slider(formant, { formant = it }, valueRange = -12f..12f, Modifier.weight(1f))
+            Slider(value = formant, onValueChange = { formant = it }, valueRange = -12f..12f, modifier = Modifier.weight(1f))
             Text(String.format("%+.0f", formant), Modifier.width(48.dp))
         }
 
         Text("Voice Clean", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("De-Ess", Modifier.width(120.dp))
-            Slider(deEssAmount, { deEssAmount = it }, valueRange = 0f..100f, Modifier.weight(1f))
+            Slider(value = deEssAmount, onValueChange = { deEssAmount = it }, valueRange = 0f..100f, modifier = Modifier.weight(1f))
             Text("${deEssAmount.roundToInt()}%", Modifier.width(48.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Noise Floor", Modifier.width(120.dp))
-            Slider(noiseFloor, { noiseFloor = it }, valueRange = -80f..-10f, Modifier.weight(1f))
+            Slider(value = noiseFloor, onValueChange = { noiseFloor = it }, valueRange = -80f..-10f, modifier = Modifier.weight(1f))
             Text("${noiseFloor.roundToInt()}dB", Modifier.width(56.dp))
         }
 
         Text("Voice Maker", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Robot", Modifier.width(120.dp))
-            Slider(robotMix, { robotMix = it }, valueRange = 0f..100f, Modifier.weight(1f))
+            Slider(value = robotMix, onValueChange = { robotMix = it }, valueRange = 0f..100f, modifier = Modifier.weight(1f))
             Text("${robotMix.roundToInt()}%", Modifier.width(48.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Chorus", Modifier.width(120.dp))
-            Slider(chorusMix, { chorusMix = it }, valueRange = 0f..100f, Modifier.weight(1f))
+            Slider(value = chorusMix, onValueChange = { chorusMix = it }, valueRange = 0f..100f, modifier = Modifier.weight(1f))
             Text("${chorusMix.roundToInt()}%", Modifier.width(48.dp))
         }
 
