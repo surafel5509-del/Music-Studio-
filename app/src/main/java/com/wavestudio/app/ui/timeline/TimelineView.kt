@@ -175,7 +175,7 @@ fun TimelineView(
                 val t = s.toFloat() / steps
                 val px = x + t * cw
                 val seed = (clip.id * 31 + clip.lengthFrames).toFloat()
-                val v = (sin(t * 13.0 + seed) * cos(t * 31.0 + seed * 0.7f) * 0.55f + 0.55f).coerceIn(0f, 1f)
+                val v = (sin(t * 13f + seed) * cos(t * 31f + seed * 0.7f) * 0.55f + 0.55f).coerceIn(0f, 1f)
                 val amp = v * maxAmp
                 if (first) { path.moveTo(px, cy - amp); first = false } else path.lineTo(px, cy - amp)
             }
@@ -183,7 +183,7 @@ fun TimelineView(
                 val t = s.toFloat() / steps
                 val px = x + t * cw
                 val seed = (clip.id * 31 + clip.lengthFrames).toFloat()
-                val v = (sin(t * 13.0 + seed) * cos(t * 31.0 + seed * 0.7f) * 0.55f + 0.55f).coerceIn(0f, 1f)
+                val v = (sin(t * 13f + seed) * cos(t * 31f + seed * 0.7f) * 0.55f + 0.55f).coerceIn(0f, 1f)
                 val amp = v * maxAmp
                 path.lineTo(px, cy + amp)
             }

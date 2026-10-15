@@ -97,7 +97,7 @@ fun PianoBeatScreen(engine: NativeAudioEngine) {
             Text("BPM ${bpm.toInt()}")
             Slider(bpm, { bpm = it }, valueRange = 60f..200f, Modifier.width(200.dp))
             Spacer(Modifier.width(12.dp))
-            OutlinedButton(onClick = { grid.forEach { it.fillAll(false) } }) { Text("Clear") }
+            OutlinedButton(onClick = { for (r in grid) for (i in r.indices) r[i] = false }) { Text("Clear") }
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
