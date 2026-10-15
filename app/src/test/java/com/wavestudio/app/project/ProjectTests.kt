@@ -916,3 +916,47 @@ class StudioTest {
         dir.deleteRecursively()
     }
 }
+
+
+class EffectCatalogTest {
+    @Test fun everyPresetEffectIsCategorised() {
+        for (p in EffectPresets.all) for (fx in p.chain) assertTrue(fx.type, EffectCatalog.category(fx.type) != "Other")
+    }
+    @Test fun groupingKeepsEveryTypeExactlyOnce() {
+        val types = listOf("reverb", "autotune", "mystery", "gain", "denoise")
+        val g = EffectCatalog.grouped(types)
+        assertEquals(types.sorted(), g.flatMap { it.second }.sorted())
+        assertEquals("Voice", g.first().first); assertEquals("Other", g.last().first)
+        assertEquals("Auto-Tune", EffectCatalog.title("autotune")); assertEquals("Some thing", EffectCatalog.title("some_thing"))
+    }
+}
+
+
+class PanelGeometryTest {
+    private val pw = 1000f; private val ph = 600f
+    @Test fun moveStaysOnScreen() {
+        val r = PanelGeometry.Rect(100f, 100f, 300f, 200f)
+        assertEquals(PanelGeometry.Rect(0f, 0f, 300f, 200f), PanelGeometry.move(r, -500f, -500f, pw, ph, 240f, 150f))
+        assertEquals(PanelGeometry.Rect(700f, 400f, 300f, 200f), PanelGeometry.move(r, 5000f, 5000f, pw, ph, 240f, 150f))
+    }
+    @Test fun resizeKeepsCornerAndLimits() {
+        val r = PanelGeometry.Rect(100f, 100f, 300f, 200f)
+        val big = PanelGeometry.resize(r, 5000f, 5000f, pw, ph, 240f, 150f)
+        assertEquals(100f, big.x, 0f); assertEquals(100f, big.y, 0f)
+        assertEquals(900f, big.w, 0f); assertEquals(500f, big.h, 0f)             // up to the parent's edge
+        val small = PanelGeometry.resize(r, -5000f, -5000f, pw, ph, 240f, 150f)
+        assertEquals(240f, small.w, 0f); assertEquals(150f, small.h, 0f)
+    }
+    @Test fun rotationShrinksParentAndPanelStillFits() {
+        val r = PanelGeometry.Rect(700f, 400f, 300f, 200f)
+        val c = PanelGeometry.clamp(r, 500f, 300f, 240f, 150f)                  // parent became smaller
+        assertTrue(c.x >= 0f && c.x + c.w <= 500f && c.y >= 0f && c.y + c.h <= 300f)
+        val tiny = PanelGeometry.clamp(r, 200f, 100f, 240f, 150f)               // parent smaller than the minimum
+        assertTrue(tiny.x >= 0f && tiny.x + tiny.w <= 200f && tiny.y + tiny.h <= 100f)
+    }
+    @Test fun garbageInputIsSafe() {
+        val c = PanelGeometry.clamp(PanelGeometry.Rect(Float.NaN, 0f, 10f, 10f), 500f, 300f, 240f, 150f)
+        assertEquals(0f, c.x, 0f); assertEquals(240f, c.w, 0f)
+        assertEquals(0f, PanelGeometry.clamp(PanelGeometry.Rect(5f, 5f, 300f, 200f), 0f, 0f, 240f, 150f).x, 0f)
+    }
+}

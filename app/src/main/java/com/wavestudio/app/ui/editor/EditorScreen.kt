@@ -3,6 +3,8 @@ package com.wavestudio.app.ui.editor
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Piano
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Login
@@ -156,6 +158,7 @@ fun EditorScreen(
     var zoom by rememberSaveable { mutableStateOf(100f) }
     val scrollY = remember { mutableFloatStateOf(0f) }
     var showMixer by rememberSaveable { mutableStateOf(false) }
+    var showOverview by rememberSaveable { mutableStateOf(false) }
     var showAnalyzer by rememberSaveable { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var showMarkers by remember { mutableStateOf(false) }
@@ -220,7 +223,8 @@ fun EditorScreen(
             )
         }
     ) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
+        Box(Modifier.padding(pad).fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
             // ---- banners: real problems with this project, never hidden
             if (status.fatalError != null) {
                 Banner("Project could not be opened: ${status.fatalError}", error = true)
@@ -240,6 +244,7 @@ fun EditorScreen(
                 ) {
                     ToolbarButton(Icons.Default.GridOn, "Snap", onClick = { vm.setSnap(!snap) }, active = snap)
                     ToolbarButton(Icons.Default.Tune, "Mixer", onClick = { showMixer = !showMixer }, active = showMixer)
+                    ToolbarButton(Icons.Default.Dashboard, "Overview", onClick = { showOverview = !showOverview }, active = showOverview)
                     ToolbarButton(Icons.Default.Timer, "Meters", onClick = { showAnalyzer = !showAnalyzer }, active = showAnalyzer)
                     ToolbarButton(Icons.Default.ZoomOut, "Zoom −", onClick = { zoom = TimelineMath.clampZoom(zoom / 1.5f) })
                     ToolbarButton(Icons.Default.ZoomIn, "Zoom +", onClick = { zoom = TimelineMath.clampZoom(zoom * 1.5f) })
@@ -335,6 +340,10 @@ fun EditorScreen(
                     )
                 }
             }
+        }
+        if (showOverview) com.wavestudio.app.ui.common.FloatingPanel(title = "Overview: effects & mixer", onClose = { showOverview = false }) {
+            OverviewPanel(doc = doc, vm = vm, onOpenEffects = onOpenEffects)
+        }
         }
     }
 

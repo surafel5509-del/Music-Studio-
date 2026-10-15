@@ -49,6 +49,15 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import com.wavestudio.app.project.EditOps
 import com.wavestudio.app.project.EffectDoc
+import com.wavestudio.app.project.EffectCatalog
+import com.wavestudio.app.project.EffectPreset
+import com.wavestudio.app.project.EffectPresets
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material3.FilterChip
 import com.wavestudio.app.project.NativeEffectInfo
 import com.wavestudio.app.project.ProjectDoc
 import com.wavestudio.app.session.ProjectSession
@@ -70,9 +79,10 @@ class EffectsViewModel @Inject constructor(val session: ProjectSession) : ViewMo
     }
     fun info(effectId: Int): NativeEffectInfo? = session.effectInfo(effectId)
     fun types(): List<String> = session.effectTypes()
+    fun applyPreset(trackId: Int, p: EffectPreset, replace: Boolean) { session.edit("Preset: ${p.name}") { EditOps.applyPreset(it, trackId, p, replace) } }
 }
 
-fun effectTitle(type: String) = type.replace('_', ' ').replaceFirstChar { it.uppercase() }
+fun effectTitle(type: String) = EffectCatalog.title(type)
 
 /** Insert effects of a track (or the master bus when [trackId] is 0, or an aux bus when it is -(index+1)). Parameters come from the native effect itself. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,6 +92,7 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltV
     val chain = vm.chain(doc, trackId)
     var selectedId by remember { mutableStateOf<Int?>(null) }
     var showBrowser by remember { mutableStateOf(false) }
+    var showPresets by remember { mutableStateOf(false) }
     val selected = chain.firstOrNull { it.id == selectedId } ?: chain.firstOrNull()
     val title = if (trackId == 0) "Master" else if (trackId < 0) doc.bus(-trackId - 1)?.name ?: "Bus" else doc.track(trackId)?.name ?: "Track"
 
@@ -90,7 +101,10 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltV
             TopAppBar(
                 title = { Text("Effects — $title") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
-                actions = { IconButton(onClick = { showBrowser = true }) { Icon(Icons.Default.Add, "Add effect") } }
+                actions = {
+                    IconButton(onClick = { showPresets = true }) { Icon(Icons.Default.AutoAwesome, "Effect presets") }
+                    IconButton(onClick = { showBrowser = true }) { Icon(Icons.Default.Add, "Add effect") }
+                }
             )
         }
     ) { pad ->
@@ -129,16 +143,23 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltV
         }
     }
 
+    if (showPresets) PresetDialog(trackId, onDismiss = { showPresets = false }, onApply = { p, r -> vm.applyPreset(trackId, p, r); showPresets = false })
     if (showBrowser) {
         val types = remember { vm.types() }
         AlertDialog(
             onDismissRequest = { showBrowser = false },
             title = { Text("Add effect") },
             text = {
-                LazyVerticalGrid(columns = GridCells.Fixed(2), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(types) { t ->
-                        ElevatedCard(onClick = { vm.add(trackId, t); showBrowser = false }, modifier = Modifier.fillMaxWidth()) {
-                            Text(effectTitle(t), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(14.dp))
+                LazyVerticalGrid(columns = GridCells.Fixed(2), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.heightIn(max = 460.dp)) {
+                    EffectCatalog.grouped(types).forEach { (cat, members) ->
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(cat, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 4.dp))
+                        }
+                        items(members) { t ->
+                            ElevatedCard(onClick = { vm.add(trackId, t); showBrowser = false }, modifier = Modifier.fillMaxWidth()) {
+                                Text(effectTitle(t), fontSize = 13.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(14.dp))
+                            }
                         }
                     }
                 }
@@ -148,6 +169,42 @@ fun EffectsScreen(trackId: Int, onBack: () -> Unit, vm: EffectsViewModel = hiltV
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PresetDialog(trackId: Int, onDismiss: () -> Unit, onApply: (EffectPreset, Boolean) -> Unit) {
+    var replace by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Effect presets") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Replace the current chain", fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = replace, onCheckedChange = { replace = it })
+                }
+                Text(if (replace) "The existing effects are removed first." else "The preset's effects are added after the existing ones.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    EffectPresets.categories.forEach { cat ->
+                        item { Text(cat, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp)) }
+                        items(EffectPresets.all.filter { it.category == cat }, key = { it.id }) { p ->
+                            ElevatedCard(onClick = { onApply(p, replace) }, modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                                Column(Modifier.padding(10.dp)) {
+                                    Text(p.name, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                    Text(p.description, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(p.chain.joinToString(" → ") { EffectCatalog.title(it.type) }, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EffectDetail(fx: EffectDoc, vm: EffectsViewModel, onRemoved: () -> Unit) {
     val info = remember(fx.id, fx.type) { vm.info(fx.id) }
@@ -163,10 +220,19 @@ private fun EffectDetail(fx: EffectDoc, vm: EffectsViewModel, onRemoved: () -> U
             return
         }
         SectionCard(title = "Parameters") {
-            LazyVerticalGrid(columns = GridCells.Adaptive(96.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(320.dp)) {
-                items(info.params, key = { it.id }) { p ->
+            LazyVerticalGrid(columns = GridCells.Adaptive(96.dp), verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(360.dp)) {
+                items(info.params, key = { it.id }, span = { p -> if (p.options.isNotEmpty()) GridItemSpan(maxLineSpan) else GridItemSpan(1) }) { p ->
                     val v = fx.params[p.id] ?: p.def
-                    Knob(
+                    if (p.options.isNotEmpty()) {
+                        Column {
+                            Text(p.name, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                p.options.forEachIndexed { i, name ->
+                                    FilterChip(selected = v.toInt() == i, onClick = { vm.setParam(fx.id, p.id, i.toFloat()) }, label = { Text(name, fontSize = 12.sp) })
+                                }
+                            }
+                        }
+                    } else Knob(
                         value = v, range = p.min..p.max, label = p.name, size = 56.dp,
                         formatter = { "%.2f".format(it) + if (p.unit.isNotEmpty()) " ${p.unit}" else "" },
                         onValueChange = { vm.setParam(fx.id, p.id, it) }, defaultValue = p.def

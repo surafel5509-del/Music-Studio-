@@ -149,6 +149,7 @@ class EditorViewModel @Inject constructor(
     fun setTrackPan(id: Int, p: Float) { if (p.isNaN()) return; session.edit("Pan", "pan:$id") { EditOps.updateTrack(it, id) { t -> t.copy(pan = p.coerceIn(-1f, 1f)) } } }
     fun toggleMute(id: Int) { session.edit("Mute") { EditOps.updateTrack(it, id) { t -> t.copy(mute = !t.mute) } } }
     fun toggleSolo(id: Int) { session.edit("Solo") { EditOps.updateTrack(it, id) { t -> t.copy(solo = !t.solo) } } }
+    fun setEffectBypass(effectId: Int, bypass: Boolean) { session.edit("Bypass") { EditOps.setEffectBypass(it, effectId, bypass) } }
     fun toggleArm(id: Int) { _armedTrack.value = if (_armedTrack.value == id) null else id }
     fun addBus() { if (!session.edit("Add aux bus") { EditOps.addBus(it).first }) say("All $MAX_BUSES aux buses are in use") }
     fun removeBus(index: Int) { session.edit("Remove aux bus") { EditOps.removeBus(it, index) } }

@@ -48,5 +48,11 @@ else
   echo "(skipped: pip install soundfile numpy to enable the libFLAC decode check)"
 fi
 
+# Effect presets (Kotlin) must only reference parameters that exist natively, inside their ranges.
+echo "=== effect preset parameters"
+$CXX $FLAGS tests/dump_effect_params.cpp $COMMON_SRC -o "$OUT/dump_effect_params"
+"$OUT/dump_effect_params" > "$OUT/effect_params.txt"
+if ! python3 "$ROOT/scripts/check_presets.py" "$ROOT/app/src/main/java/com/wavestudio/app/project/EffectPresets.kt" "$OUT/effect_params.txt"; then fail=1; echo "!!! preset check FAILED"; fi
+
 if [[ $fail -ne 0 ]]; then echo "NATIVE TESTS FAILED"; exit 1; fi
 echo "ALL NATIVE TESTS PASSED"
