@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.WaveStudio" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/ws_background</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+    <style name="Theme.WaveStudio.Plugin" parent="Theme.WaveStudio">
+        <item name="android:windowIsFloating">false</item>
+    </style>
+    <style name="Theme.WaveStudio.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0D1117</item>
+        <item name="postSplashScreenTheme">@style/Theme.WaveStudio</item>
+    </style>
+</resources>

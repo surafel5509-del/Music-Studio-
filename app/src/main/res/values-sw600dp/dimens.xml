@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tablet / large screen dimensions -->
+    <dimen name="track_control_width">220dp</dimen>
+    <dimen name="mixer_panel_width">280dp</dimen>
+</resources>

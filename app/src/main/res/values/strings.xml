@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">WaveStudio</string>
+    <string name="channel_engine">Audio Engine</string>
+    <string name="channel_engine_desc">Keeps audio playing and recording active.</string>
+    <string name="channel_export">Export</string>
+    <string name="channel_export_desc">Audio export progress.</string>
+    <string name="exporting">Exporting…</string>
+    <string name="export_done">Export complete</string>
+    <string name="export_failed">Export failed</string>
+    <string name="share_export">Share exported audio</string>
+</resources>
