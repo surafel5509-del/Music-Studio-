@@ -335,7 +335,7 @@ bool EngineCore::get_effect_info(int effect_id, EffectInfo& out) const {
     for (int i = 0; i < e->fx->param_count(); ++i) {
         const auto& p = e->fx->param(i);
         EffectParamInfo pi; pi.id = p.id; pi.display = p.display; pi.unit = p.unit;
-        pi.min = p.min; pi.max = p.max; pi.def = p.def; pi.value = e->values[i];
+        pi.min = p.min; pi.max = p.max; pi.def = p.def; pi.value = e->values[i]; pi.options = p.options;
         out.params.push_back(std::move(pi));
     }
     return true;

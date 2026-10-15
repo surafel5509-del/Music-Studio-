@@ -20,6 +20,8 @@ public:
         std::string display;
         float min, max, def, value;
         std::string unit;
+        // Optional: names of discrete choices (value i selects options[i]); empty for continuous parameters.
+        std::vector<std::string> options;
     };
 
     virtual int param_count() const { return (int)params_.size(); }

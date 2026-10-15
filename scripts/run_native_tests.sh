@@ -17,12 +17,12 @@ cd "$CPP"
 
 COMMON_SRC="dsp/buffer.cpp dsp/file_io/wav_reader.cpp dsp/file_io/wav_stream_writer.cpp dsp/file_io/flac_stream_writer.cpp dsp/resampler/resampler.cpp \
 dsp/analysis/lufs.cpp dsp/analysis/spectrum.cpp dsp/effects/effect_factory.cpp dsp/effects/eq.cpp dsp/effects/compressor.cpp \
-dsp/effects/reverb.cpp dsp/effects/distortion.cpp dsp/effects/utility.cpp \
+dsp/effects/reverb.cpp dsp/effects/distortion.cpp dsp/effects/utility.cpp dsp/effects/voice_fx.cpp dsp/effects/mod_fx.cpp \
 dsp/engine/engine_core.cpp dsp/engine/media.cpp dsp/engine/recorder.cpp dsp/engine/offline_export.cpp"
 
 if [[ "${FAST:-0}" == "1" ]]; then SAN=""; TSAN=""; ITER=300; else SAN="-fsanitize=address,undefined -fno-sanitize-recover=undefined"; TSAN="-fsanitize=thread"; ITER=1000; fi
 CXX="${CXX:-g++}"
-FLAGS="-std=c++17 -O1 -g -Wall -Wextra -Wno-unused-parameter -Idsp -Itests -pthread"
+FLAGS="-std=c++17 -O1 -g -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-parameter -Idsp -Itests -pthread"
 
 fail=0
 build_and_run() {  # name sanitizer-flags [env...]

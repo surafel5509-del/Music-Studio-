@@ -42,6 +42,7 @@ struct ClipParams {
 struct EffectParamInfo {
     std::string id, display, unit;
     float min = 0, max = 1, def = 0, value = 0;
+    std::vector<std::string> options;   // names of discrete choices (empty for continuous parameters)
 };
 struct EffectInfo {
     int id = 0;

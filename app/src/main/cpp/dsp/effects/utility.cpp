@@ -6,7 +6,7 @@ namespace wavestudio {
 Gain::Gain() {
     params_ = {
         {"gain","Gain",-60,24,0,0,"dB"},
-        {"invert","Invert Phase",0,1,0,0,""},
+        {"invert","Phase",0,1,0,0,"", {"Normal","Inverted"}},
     };
 }
 

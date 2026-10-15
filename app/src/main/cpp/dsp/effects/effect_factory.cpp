@@ -4,6 +4,8 @@
 #include "eq.h"
 #include "reverb.h"
 #include "utility.h"
+#include "voice_fx.h"
+#include "mod_fx.h"
 
 namespace wavestudio {
 
@@ -23,13 +25,20 @@ std::unique_ptr<Effect> create_effect(const std::string& id) {
     if (id == "distortion") return std::make_unique<Distortion>();
     if (id == "bitcrusher") return std::make_unique<BitCrusher>();
     if (id == "stereo_width") return std::make_unique<StereoWidth>();
+    if (id == "pitch_shift") return std::make_unique<PitchShift>();
+    if (id == "autotune") return std::make_unique<AutoTune>();
+    if (id == "voice_changer") return std::make_unique<VoiceChanger>();
+    if (id == "denoise") return std::make_unique<Denoise>();
+    if (id == "tremolo") return std::make_unique<Tremolo>();
+    if (id == "exciter") return std::make_unique<Exciter>();
     return nullptr;
 }
 
 const std::vector<std::string>& available_effect_types() {
     static const std::vector<std::string> v = {
         "gain", "eq", "filter", "compressor", "limiter", "gate", "deesser", "reverb", "delay",
-        "chorus", "flanger", "phaser", "distortion", "bitcrusher", "stereo_width"};
+        "chorus", "flanger", "phaser", "distortion", "bitcrusher", "stereo_width",
+        "pitch_shift", "autotune", "voice_changer", "denoise", "tremolo", "exciter"};
     return v;
 }
 

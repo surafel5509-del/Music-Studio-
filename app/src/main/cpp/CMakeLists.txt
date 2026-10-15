@@ -20,6 +20,8 @@ set(WS_ENGINE_SOURCES
         dsp/effects/reverb.cpp
         dsp/effects/distortion.cpp
         dsp/effects/utility.cpp
+        dsp/effects/voice_fx.cpp
+        dsp/effects/mod_fx.cpp
         dsp/analysis/spectrum.cpp
         dsp/analysis/lufs.cpp
         dsp/file_io/wav_reader.cpp
@@ -29,13 +31,13 @@ set(WS_ENGINE_SOURCES
 )
 
 # Not built into the app (stubs / not yet integrated): dsp/file_io/mp3_io.cpp,
-# dsp/midi/midi_processor.cpp, dsp/effects/pitch_shift.cpp, dsp/util/simd_utils.cpp.
+# dsp/midi/midi_processor.cpp, dsp/util/simd_utils.cpp.
 # See docs/ARCHITECTURE.md ("What is and is not implemented").
 
 add_library(wavestudio SHARED ${WS_ENGINE_SOURCES})
 
 target_compile_options(wavestudio PRIVATE
-        -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
+        -Wall -Wextra -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-function -Wno-unused-variable
         -fvisibility=hidden -fvisibility-inlines-hidden
         -fno-math-errno
 )

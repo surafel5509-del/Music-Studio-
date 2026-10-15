@@ -147,6 +147,28 @@ object EditOps {
     fun setEffectBypass(d: ProjectDoc, effectId: Int, bypass: Boolean): ProjectDoc =
         mapEffect(d, effectId) { it.copy(bypass = bypass) }
 
+    /**
+     * Appends the preset's effects to [target] (>0 track, 0 master, <0 aux bus), or replaces the chain first when
+     * [replace] is set. On a bus the wet/mix parameters are forced fully wet, whatever the preset says.
+     */
+    fun applyPreset(d: ProjectDoc, target: Int, preset: EffectPreset, replace: Boolean = false): ProjectDoc {
+        var doc = d
+        val exists = when { target == 0 -> true; target < 0 -> doc.bus(-target - 1) != null; else -> doc.track(target) != null }
+        if (!exists) return d
+        if (replace) {
+            val old = when { target == 0 -> doc.masterEffects; target < 0 -> doc.bus(-target - 1)!!.effects; else -> doc.track(target)!!.effects }
+            for (e in old) doc = removeEffect(doc, e.id)
+        }
+        for (fx in preset.chain) {
+            val (n, id) = addEffect(doc, target, fx.type)
+            if (id < 0) continue
+            doc = n
+            for ((k, v) in fx.params) doc = setEffectParam(doc, id, k, v)
+            if (target < 0) for ((k, v) in busDefaults(fx.type)) doc = setEffectParam(doc, id, k, v)   // a send bus must stay 100 % wet
+        }
+        return doc
+    }
+
     // ------------------------------------------------------------------ aux buses and sends
     fun updateBus(d: ProjectDoc, index: Int, f: (BusDoc) -> BusDoc): ProjectDoc {
         val b = d.bus(index) ?: return d

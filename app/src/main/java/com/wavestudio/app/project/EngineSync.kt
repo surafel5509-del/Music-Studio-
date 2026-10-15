@@ -1,6 +1,10 @@
 package com.wavestudio.app.project
 
-data class NativeParam(val id: String, val name: String, val unit: String, val min: Float, val max: Float, val def: Float, val value: Float)
+data class NativeParam(
+    val id: String, val name: String, val unit: String, val min: Float, val max: Float, val def: Float, val value: Float,
+    /** Names of discrete choices (value i selects options[i]); empty for continuous parameters. */
+    val options: List<String> = emptyList()
+)
 data class NativeEffectInfo(val id: Int, val trackId: Int, val type: String, val name: String, val bypass: Boolean, val params: List<NativeParam>) {
     companion object {
         fun parse(json: String): NativeEffectInfo? = try {
@@ -8,7 +12,8 @@ data class NativeEffectInfo(val id: Int, val trackId: Int, val type: String, val
             if (m.isEmpty()) null else NativeEffectInfo(
                 m.int("id"), m.int("trackId"), m.str("type"), m.str("name"), m.bool("bypass"),
                 m["params"].asList().map { it.asObj() }.map {
-                    NativeParam(it.str("id"), it.str("name"), it.str("unit"), it.float("min"), it.float("max"), it.float("def"), it.float("value"))
+                    NativeParam(it.str("id"), it.str("name"), it.str("unit"), it.float("min"), it.float("max"), it.float("def"), it.float("value"),
+                        it["options"].asList().map { o -> (o as? String) ?: "" })
                 }
             )
         } catch (_: JsonException) { null }

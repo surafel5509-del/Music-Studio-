@@ -161,7 +161,13 @@ JNI(jstring, nativeEffectInfo, jint id) {
         const auto& p = e.params[i];
         if (i) j += ",";
         j += "{\"id\":\"" + json_escape(p.id) + "\",\"name\":\"" + json_escape(p.display) + "\",\"unit\":\"" + json_escape(p.unit) +
-             "\",\"min\":" + num(p.min) + ",\"max\":" + num(p.max) + ",\"def\":" + num(p.def) + ",\"value\":" + num(p.value) + "}";
+             "\",\"min\":" + num(p.min) + ",\"max\":" + num(p.max) + ",\"def\":" + num(p.def) + ",\"value\":" + num(p.value);
+        if (!p.options.empty()) {
+            j += ",\"options\":[";
+            for (size_t o = 0; o < p.options.size(); ++o) j += (o ? ",\"" : "\"") + json_escape(p.options[o]) + "\"";
+            j += "]";
+        }
+        j += "}";
     }
     return to_jstring(env, j + "]}");
 }

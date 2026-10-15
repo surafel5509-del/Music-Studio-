@@ -9,7 +9,7 @@ Distortion::Distortion() {
         {"drive","Drive",0,40,12,12,"dB"},
         {"tone","Tone",200,12000,3000,3000,"Hz"},
         {"mix","Mix",0,1,0.5f,0.5f,""},
-        {"type","Type",0,4,1,1,""}, // 0=soft,1=hard,2=fuzz,3=tube,4=sine
+        {"type","Type",0,4,1,1,"", {"Soft","Hard","Fuzz","Tube","Sine"}},
     };
 }
 
@@ -80,7 +80,7 @@ void BitCrusher::process(float** buffers, int nf, int nc) {
 
 Filter::Filter() {
     params_ = {
-        {"type","Type (0=LP,1=HP,2=BP,3=N)",0,3,0,0,""},
+        {"type","Type",0,3,0,0,"", {"Low-pass","High-pass","Band-pass","Notch"}},
         {"freq","Cutoff",20,20000,1000,1000,"Hz"},
         {"res","Resonance",0.1f,20,1.f,1.f,"Q"},
     };

@@ -681,3 +681,35 @@ class TimelineMathTest {
         val (a, b) = TimelineMath.clipSpan(-1e9f, 1e9f, 800f); assertEquals(-24f, a, 0f); assertEquals(824f, b, 0f)
     }
 }
+
+class EffectPresetTest {
+    @Test fun presetsHaveUniqueIdsAndKnownShape() {
+        assertEquals(EffectPresets.all.size, EffectPresets.all.map { it.id }.toSet().size)
+        for (p in EffectPresets.all) { assertTrue(p.name.isNotBlank()); assertTrue(p.chain.isNotEmpty()) }
+        assertNotNull(EffectPresets.byId("voice_clean")); assertNull(EffectPresets.byId("nope"))
+    }
+    @Test fun applyAppendsOrReplaces() {
+        var d = ProjectDoc()
+        val (d1, t) = EditOps.addTrack(d); d = d1
+        d = EditOps.addEffect(d, t, "gain").first
+        val clean = EffectPresets.byId("voice_clean")!!
+        val a = EditOps.applyPreset(d, t, clean)
+        assertEquals(1 + clean.chain.size, a.track(t)!!.effects.size)
+        assertEquals(90f, a.track(t)!!.effects[1].params["freq"]!!, 0f)
+        val r = EditOps.applyPreset(d, t, clean, replace = true)
+        assertEquals(clean.chain.map { it.type }, r.track(t)!!.effects.map { it.type })
+        assertSame(d, EditOps.applyPreset(d, 999, clean))                        // unknown track: unchanged
+        val m = EditOps.applyPreset(d, 0, EffectPresets.byId("hard_tune")!!)
+        assertEquals("autotune", m.masterEffects.last().type)
+    }
+    @Test fun presetsOnBusesAreForcedFullyWet() {
+        var d = ProjectDoc(); d = EditOps.addBus(d).first
+        val out = EditOps.applyPreset(d, -1, EffectPresets.byId("wide_double")!!)
+        assertEquals(1f, out.bus(0)!!.effects[0].params["mix"]!!, 0f)
+        assertEquals(2, out.bus(0)!!.effects.size)
+    }
+    @Test fun nativeParamOptionsParse() {
+        val i = NativeEffectInfo.parse("""{"id":3,"trackId":0,"type":"autotune","name":"Auto-Tune","bypass":false,"params":[{"id":"scale","name":"Scale","unit":"","min":0,"max":7,"def":0,"value":1,"options":["Chromatic","Major"]},{"id":"speed","name":"S","unit":"ms","min":0,"max":400,"def":20,"value":20}]}""")!!
+        assertEquals(listOf("Chromatic", "Major"), i.params[0].options); assertTrue(i.params[1].options.isEmpty())
+    }
+}
