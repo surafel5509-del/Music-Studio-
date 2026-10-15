@@ -126,6 +126,12 @@ public:
     void set_input_latency_frames(int64_t f) { latency_comp_.store(f); }
     void set_monitor(bool on, float gain);
     float input_peak();                       // read-and-reset
+    // Input conditioning, applied to what is monitored AND recorded (control thread; takes effect within a block):
+    // trim gain -24..+24 dB, optional 2nd-order low-cut (0 = off, else 20..400 Hz), optional DC-offset removal.
+    // With the defaults (0 dB, off, off) the input path is bit-exact.
+    void set_input_conditioning(float gain_db, float hpf_hz, bool dc_block);
+    int64_t input_clip_count() const { return in_clip_.load(std::memory_order_relaxed); }   // samples at/over full scale since reset
+    void reset_input_clips() { in_clip_.store(0, std::memory_order_relaxed); }
     int64_t recording_dropped_frames() const { return recorder_.dropped_frames(); }
 
     // ---------------- meters / analysis ----------------
@@ -279,6 +285,14 @@ private:
     std::atomic<float> m_peak_l_{0.f}, m_peak_r_{0.f}, m_rms_l_{0.f}, m_rms_r_{0.f};
     std::atomic<int64_t> clip_count_{0};
     std::atomic<float> in_peak_{0.f};
+    std::atomic<float> in_gain_lin_{1.f}, in_hpf_hz_{0.f};
+    std::atomic<bool> in_dc_{false};
+    std::atomic<int64_t> in_clip_{0};
+    // input conditioning state (audio thread only)
+    float in_g_cur_ = 1.f;
+    double hp_b0_ = 1, hp_b1_ = 0, hp_b2_ = 0, hp_a1_ = 0, hp_a2_ = 0, hp_z1_[2] = {0, 0}, hp_z2_[2] = {0, 0};
+    float hp_cfg_hz_ = -1.f;
+    double dc_x1_[2] = {0, 0}, dc_y1_[2] = {0, 0};
     std::atomic<int64_t> underruns_{0}, renders_{0};
     std::atomic<float> max_load_{0.f};
     double rms_acc_l_ = 0, rms_acc_r_ = 0;

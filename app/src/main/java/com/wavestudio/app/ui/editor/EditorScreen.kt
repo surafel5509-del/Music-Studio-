@@ -367,6 +367,7 @@ fun EditorScreen(
     )
     if (showExport) {
         ExportDialog(
+            initial = vm.settings.value,
             onDismiss = { showExport = false },
             onExport = { o ->
                 showExport = false
@@ -512,6 +513,7 @@ fun TransportBar(
                 VuMeter(peak = meters.inputPeak, rms = meters.inputPeak, modifier = Modifier.size(14.dp, 40.dp), label = "IN")
             }
             if (meters.clipCount > 0) Text("CLIP", color = clipColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+            if (recording && meters.inputClips > 0) Text("IN CLIP ${meters.inputClips}", color = clipColor, fontWeight = FontWeight.Bold, fontSize = 11.sp)
             Spacer(Modifier.width(6.dp))
             ToolbarButton(Icons.Default.Repeat, "Loop", active = loop, onClick = onToggleLoop)
             ToolbarButton(Icons.Default.Timer, "Click", active = metronome, onClick = onToggleMetronome)
@@ -560,13 +562,13 @@ private fun MarkersDialog(
 }
 
 @Composable
-private fun ExportDialog(onDismiss: () -> Unit, onExport: (ExportOptions) -> Unit) {
-    var rate by remember { mutableStateOf(48000) }
-    var bits by remember { mutableStateOf(24) }
+private fun ExportDialog(initial: com.wavestudio.app.project.AppSettingsData, onDismiss: () -> Unit, onExport: (ExportOptions) -> Unit) {
+    var rate by remember { mutableStateOf(initial.exportSampleRate) }
+    var bits by remember { mutableStateOf(initial.exportBitDepth) }
     var channels by remember { mutableStateOf(2) }
     var dither by remember { mutableStateOf(true) }
     var tail by remember { mutableStateOf(true) }
-    var flac by remember { mutableStateOf(false) }
+    var flac by remember { mutableStateOf(initial.exportFlac) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (flac) "Export mix (FLAC)" else "Export mix (WAV)") },

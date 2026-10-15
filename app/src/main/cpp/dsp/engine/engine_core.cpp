@@ -386,6 +386,14 @@ void EngineCore::set_metronome(bool on, float bpm, int beats) {
 void EngineCore::set_count_in_bars(int bars) { count_in_bars_.store(std::max(0, std::min(bars, 4))); }
 void EngineCore::set_monitor(bool on, float gain) { monitor_gain_.store(clampf(gain, 0.f, 2.f)); monitor_on_.store(on); }
 float EngineCore::input_peak() { return in_peak_.exchange(0.f); }
+void EngineCore::set_input_conditioning(float gain_db, float hpf_hz, bool dc_block) {
+    if (!(gain_db == gain_db)) gain_db = 0.f;
+    if (!(hpf_hz == hpf_hz)) hpf_hz = 0.f;
+    gain_db = clampf(gain_db, -24.f, 24.f);
+    in_gain_lin_.store(std::pow(10.f, gain_db / 20.f));
+    in_hpf_hz_.store(hpf_hz < 20.f ? 0.f : clampf(hpf_hz, 20.f, 400.f));
+    in_dc_.store(dc_block);
+}
 
 // ---- recording ----
 bool EngineCore::start_recording(const std::string& path, int ch, int bits) {
@@ -658,8 +666,51 @@ int EngineCore::render_chunk_planned(float* out, int n, const float* in, int in_
             if (!is_finite_bits(a)) a = 0.f;
             if (!is_finite_bits(b)) b = 0.f;
             iL[i] = a; iR[i] = b;
-            pk = std::max(pk, std::max(std::fabs(a), std::fabs(b)));
         }
+        // input conditioning (trim gain ramp, DC removal, low-cut): skipped entirely at the defaults
+        const float gT = in_gain_lin_.load(std::memory_order_relaxed);
+        const float hz = in_hpf_hz_.load(std::memory_order_relaxed);
+        const bool dc = in_dc_.load(std::memory_order_relaxed);
+        if (gT != 1.f || in_g_cur_ != 1.f || hz > 0.f || dc) {
+            if (hz != hp_cfg_hz_) {
+                hp_cfg_hz_ = hz;
+                if (hz > 0.f) {
+                    const double w0 = 2.0 * M_PI * std::min((double)hz, 0.45 * engine_rate_) / engine_rate_;
+                    const double cw = std::cos(w0), al = std::sin(w0) / (2.0 * 0.70710678);
+                    const double a0 = 1.0 + al;
+                    hp_b0_ = (1.0 + cw) / 2.0 / a0; hp_b1_ = -(1.0 + cw) / a0; hp_b2_ = hp_b0_;
+                    hp_a1_ = -2.0 * cw / a0; hp_a2_ = (1.0 - al) / a0;
+                }
+            }
+            const double dcR = 1.0 - 2.0 * M_PI * 5.0 / engine_rate_;
+            const float gstep = (gT - in_g_cur_) / (float)n;
+            float g = in_g_cur_;
+            int clips = 0;
+            for (int i = 0; i < n; ++i) {
+                g += gstep;
+                float* ch[2] = {iL + i, iR + i};
+                for (int c = 0; c < 2; ++c) {
+                    double x = (double)*ch[c] * g;
+                    if (dc) { const double y = x - dc_x1_[c] + dcR * dc_y1_[c]; dc_x1_[c] = x; dc_y1_[c] = y; x = y; }
+                    if (hz > 0.f) {
+                        const double y = hp_b0_ * x + hp_z1_[c];
+                        hp_z1_[c] = hp_b1_ * x - hp_a1_ * y + hp_z2_[c];
+                        hp_z2_[c] = hp_b2_ * x - hp_a2_ * y;
+                        x = y;
+                    }
+                    const float f = (float)x;
+                    if (std::fabs(f) >= 0.999f) ++clips;
+                    *ch[c] = f;
+                }
+            }
+            in_g_cur_ = gT;
+            if (clips) in_clip_.fetch_add(clips, std::memory_order_relaxed);
+        } else {
+            int clips = 0;
+            for (int i = 0; i < n; ++i) if (std::fabs(iL[i]) >= 0.999f || std::fabs(iR[i]) >= 0.999f) ++clips;
+            if (clips) in_clip_.fetch_add(clips, std::memory_order_relaxed);
+        }
+        for (int i = 0; i < n; ++i) pk = std::max(pk, std::max(std::fabs(iL[i]), std::fabs(iR[i])));
         if (pk > in_peak_.load(std::memory_order_relaxed)) in_peak_.store(pk, std::memory_order_relaxed);
     }
 

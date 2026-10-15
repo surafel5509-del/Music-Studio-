@@ -43,7 +43,9 @@ data class DeviceStatus(
 
 data class MasterMeters(
     val peakL: Float = 0f, val peakR: Float = 0f, val rmsL: Float = 0f, val rmsR: Float = 0f,
-    val inputPeak: Float = 0f, val clipCount: Int = 0, val recordingDropped: Long = 0
+    val inputPeak: Float = 0f, val clipCount: Int = 0, val recordingDropped: Long = 0,
+    /** Input samples at or over full scale since the last reset (a take with clipped input is damaged for good). */
+    val inputClips: Long = 0
 ) { val peak get() = maxOf(peakL, peakR); val rms get() = maxOf(rmsL, rmsR) }
 
 /** Momentary / short-term / integrated LUFS and L/R correlation. */
@@ -147,6 +149,7 @@ class AudioEngineController @Inject constructor(val native: NativeAudioEngine) {
     fun refreshDevice() {
         val d = DeviceStatus.parse(native.nativeDeviceStatus())
         _device.value = d
+        inputCond.let { native.nativeSetInputConditioning(it.first, it.second, it.third) }
         if (d.estRoundTripFrames > 0) native.nativeSetInputLatency(d.estRoundTripFrames.toLong())
     }
 
@@ -166,6 +169,14 @@ class AudioEngineController @Inject constructor(val native: NativeAudioEngine) {
     fun endRecording(): RecordingResult? = RecordingResult.parse(native.nativeStopRecording())
     fun isRecording(): Boolean = native.nativeIsRecording()
     fun setMonitor(on: Boolean, gain: Float = 1f) = native.nativeSetMonitor(on, gain)
+    /** Input trim gain (dB), low-cut (Hz, 0 = off) and DC-offset removal; applied to what is monitored and recorded. */
+    fun setInputConditioning(gainDb: Float, hpfHz: Float, dcBlock: Boolean) {
+        inputCond = Triple(gainDb, hpfHz, dcBlock)
+        native.nativeSetInputConditioning(gainDb, hpfHz, dcBlock)
+    }
+    /** Remembered so it survives the engine core being rebuilt (device restart / sample-rate change). */
+    @Volatile private var inputCond = Triple(0f, 0f, false)
+    fun resetInputClips() = native.nativeResetInputClips()
 
     fun mediaInfo(path: String): MediaInfo = MediaInfo.parse(native.nativeMediaInfo(path))
     fun resetLoudness() = native.nativeResetLoudness()
@@ -187,7 +198,7 @@ class AudioEngineController @Inject constructor(val native: NativeAudioEngine) {
     private fun startPolling() {
         pollJob?.cancel()
         pollJob = scope.launch {
-            val m = FloatArray(7); val tm = FloatArray(2); val ld = FloatArray(4); val bins = FloatArray(64)
+            val m = FloatArray(8); val tm = FloatArray(2); val ld = FloatArray(4); val bins = FloatArray(64)
             var tick = 0
             while (isActive) {
                 if (!uiVisible) { updateTransport(); delay(250); continue }
@@ -195,7 +206,7 @@ class AudioEngineController @Inject constructor(val native: NativeAudioEngine) {
                 _countingIn.value = native.nativeIsCountingIn()
                 updateTransport()
                 native.nativeGetMeters(m)
-                _meters.value = MasterMeters(m[0], m[1], m[2], m[3], m[4], m[5].toInt(), m[6].toLong())
+                _meters.value = MasterMeters(m[0], m[1], m[2], m[3], m[4], m[5].toInt(), m[6].toLong(), m[7].toLong())
                 val ids = meterTrackIds
                 if (ids.isNotEmpty()) {
                     val map = HashMap<Int, Pair<Float, Float>>(ids.size * 2)

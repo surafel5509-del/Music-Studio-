@@ -194,15 +194,17 @@ JNI(jstring, nativeStopRecording) {
 JNI(jboolean, nativeIsRecording) { return C()->is_recording(); }
 JNI(void, nativeSetInputLatency, jlong frames) { C()->set_input_latency_frames(frames); }
 JNI(void, nativeSetMonitor, jboolean on, jfloat gain) { C()->set_monitor(on, gain); }
+JNI(void, nativeSetInputConditioning, jfloat gainDb, jfloat hpfHz, jboolean dcBlock) { C()->set_input_conditioning(gainDb, hpfHz, dcBlock); }
+JNI(void, nativeResetInputClips) { C()->reset_input_clips(); }
 
 // ------------------------------------------------------------------ meters / analysis
-// out: [masterPeakL, masterPeakR, masterRmsL, masterRmsR, inputPeak, clipCount, recordingDropped]
+// out: [masterPeakL, masterPeakR, masterRmsL, masterRmsR, inputPeak, clipCount, recordingDropped, inputClipSamples]
 JNI(void, nativeGetMeters, jfloatArray out) {
-    if (!out || env->GetArrayLength(out) < 7) return;
+    if (!out || env->GetArrayLength(out) < 8) return;
     auto c = C();
     MasterMeters m = c->master_meters();
-    float v[7] = {m.peak_l, m.peak_r, m.rms_l, m.rms_r, c->input_peak(), (float)m.clip_count, (float)c->recording_dropped_frames()};
-    env->SetFloatArrayRegion(out, 0, 7, v);
+    float v[8] = {m.peak_l, m.peak_r, m.rms_l, m.rms_r, c->input_peak(), (float)m.clip_count, (float)c->recording_dropped_frames(), (float)c->input_clip_count()};
+    env->SetFloatArrayRegion(out, 0, 8, v);
 }
 JNI(jboolean, nativeGetTrackMeter, jint id, jfloatArray out) {
     if (!out || env->GetArrayLength(out) < 2) return false;

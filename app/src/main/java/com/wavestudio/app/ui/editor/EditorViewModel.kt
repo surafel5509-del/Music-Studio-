@@ -46,7 +46,8 @@ class EditorViewModel @Inject constructor(
     app: Application,
     private val repo: ProjectRepository,
     val session: ProjectSession,
-    val engine: AudioEngineController
+    val engine: AudioEngineController,
+    val settings: com.wavestudio.app.settings.AppSettings
 ) : AndroidViewModel(app) {
 
     private val ctx get() = getApplication<Application>()
@@ -121,8 +122,9 @@ class EditorViewModel @Inject constructor(
             }
             var tid = _armedTrack.value?.takeIf { id -> session.doc.value.track(id) != null } ?: session.doc.value.tracks.firstOrNull()?.id
             if (tid == null) { session.edit("Add track") { d -> EditOps.addTrack(d).first }; tid = session.doc.value.tracks.first().id }
-            var r = session.startRecording(tid)
-            if (r == RecordStart.NO_INPUT && hasMic()) { engine.enableInput(); r = session.startRecording(tid) }
+            val bits = settings.value.recordBitDepth
+            var r = session.startRecording(tid, bits)
+            if (r == RecordStart.NO_INPUT && hasMic()) { engine.enableInput(); r = session.startRecording(tid, bits) }
             when (r) {
                 RecordStart.OK -> AudioEngineService.start(ctx)
                 RecordStart.NO_INPUT -> say(if (hasMic()) "No audio input is available on this device." else "Microphone permission is required to record. Grant it in system settings.")

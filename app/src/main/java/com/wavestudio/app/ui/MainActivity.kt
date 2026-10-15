@@ -11,6 +11,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.Color
+import android.view.WindowManager
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import com.wavestudio.app.project.ThemeMode
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.navigation.compose.rememberNavController
@@ -27,6 +33,7 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var engine: AudioEngineController
     @Inject lateinit var session: ProjectSession
+    @Inject lateinit var settings: com.wavestudio.app.settings.AppSettings
 
     private val requestPerms = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -50,8 +57,25 @@ class MainActivity : ComponentActivity() {
             startEngine()
         }
 
+        // Input trim / low-cut / DC removal follow the settings (re-applied by the controller after device restarts).
+        lifecycleScope.launch {
+            settings.data.collect { engine.setInputConditioning(it.inputGainDb, it.inputLowCutHz.toFloat(), it.removeDc) }
+        }
+
         setContent {
-            WaveStudioTheme {
+            val st by settings.data.collectAsState()
+            val transport by engine.transportState.collectAsState()
+            val dark = when (st.themeMode) {
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                ThemeMode.LIGHT -> false
+                ThemeMode.DARK -> true
+            }
+            val keepOn = st.keepScreenOn && (transport == TransportState.PLAYING || transport == TransportState.RECORDING)
+            DisposableEffect(keepOn) {
+                if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                onDispose { window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+            }
+            WaveStudioTheme(darkTheme = dark, dynamicColor = st.dynamicColor, accentColor = Color(st.accent.argb)) {
                 Surface(modifier = Modifier.fillMaxSize(), color = androidx.compose.material3.MaterialTheme.colorScheme.background) {
                     val navController = rememberNavController()
                     WaveStudioNavGraph(navController = navController)

@@ -311,6 +311,7 @@ class ProjectSession @Inject constructor(
         if (recWavName != null) return RecordStart.ALREADY_RECORDING
         if (_doc.value.track(trackId) == null) return RecordStart.NO_TRACK
         controller.refreshDevice()
+        controller.resetInputClips()                          // the clip counter describes this take only
         val dev = controller.device.value
         if (!dev.inputRunning || dev.inputChannels < 1) return RecordStart.NO_INPUT
         val name = "take_${System.currentTimeMillis()}.wav"

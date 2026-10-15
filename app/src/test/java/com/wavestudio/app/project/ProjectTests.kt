@@ -713,3 +713,30 @@ class EffectPresetTest {
         assertEquals(listOf("Chromatic", "Major"), i.params[0].options); assertTrue(i.params[1].options.isEmpty())
     }
 }
+
+
+class AppSettingsDataTest {
+    @Test fun defaultsAreValidAndStable() {
+        val d = AppSettingsData()
+        assertEquals(d, d.sanitized())
+        assertEquals(24, d.recordBitDepth); assertTrue(d.removeDc); assertEquals(0, d.inputLowCutHz)
+    }
+    @Test fun sanitizeClampsEverything() {
+        val s = AppSettingsData(accentIndex = 99, recordBitDepth = 20, inputGainDb = 80f, inputLowCutHz = 95,
+            exportSampleRate = 12345, exportBitDepth = 8).sanitized()
+        assertEquals(AppSettingsData.ACCENTS.size - 1, s.accentIndex)
+        assertEquals(24, s.recordBitDepth); assertEquals(24f, s.inputGainDb, 0f)
+        assertEquals(80, s.inputLowCutHz); assertEquals(48000, s.exportSampleRate); assertEquals(24, s.exportBitDepth)
+        assertEquals(0f, AppSettingsData(inputGainDb = Float.NaN).sanitized().inputGainDb, 0f)
+        assertEquals(-3.5f, AppSettingsData(inputGainDb = -3.4f).sanitized().inputGainDb, 0f)
+        assertEquals(0, AppSettingsData(accentIndex = -4).sanitized().accentIndex)
+    }
+    @Test fun flacNeverKeeps32Bit() {
+        assertEquals(24, AppSettingsData(exportFlac = true, exportBitDepth = 32).sanitized().exportBitDepth)
+        assertEquals(32, AppSettingsData(exportFlac = false, exportBitDepth = 32).sanitized().exportBitDepth)
+    }
+    @Test fun themeParse() {
+        assertEquals(ThemeMode.DARK, ThemeMode.parse("DARK")); assertEquals(ThemeMode.SYSTEM, ThemeMode.parse("nonsense")); assertEquals(ThemeMode.SYSTEM, ThemeMode.parse(null))
+        assertTrue(AppSettingsData().accent.argb != 0L)
+    }
+}

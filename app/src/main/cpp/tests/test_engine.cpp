@@ -335,6 +335,47 @@ static void test_input_monitor_and_input_meter() {
     CHECK(peak(out) == 0.f);
 }
 
+static void test_input_conditioning() {
+    auto sine_in = [](double f, double amp, int n) { std::vector<float> v(n); for (int i = 0; i < n; ++i) v[i] = (float)(amp * std::sin(2 * M_PI * f * i / 48000.0)); return v; };
+    auto rms_of = [](const std::vector<float>& o, int from) { double s = 0; int c = 0; for (size_t i = from; i < o.size() / 2; ++i) { s += (double)o[2 * i] * o[2 * i]; ++c; } return std::sqrt(s / c); };
+    auto run = [&](const std::vector<float>& in, float gdb, float hz, bool dc, bool* clipped = nullptr) {
+        EngineCore e(lib(), 48000);
+        e.set_monitor(true, 1.f); e.set_input_conditioning(gdb, hz, dc); e.play();
+        std::vector<float> out(in.size() * 2), blk(960);
+        for (size_t i = 0; i + 480 <= in.size(); i += 480) { render(e, blk.data(), 480, in.data() + i, 1); std::copy(blk.begin(), blk.end(), out.begin() + 2 * i); }
+        if (clipped) *clipped = e.input_clip_count() > 0;
+        return out;
+    };
+    const int n = 48000;
+    auto tone = sine_in(1000, 0.2, n);
+    double base = rms_of(run(tone, 0.f, 0.f, false), 4800);
+    double g6 = rms_of(run(tone, 6.f, 0.f, false), 4800);
+    CHECK_NEAR(g6 / base, 1.9953, 0.01);                                  // +6 dB
+    double gm = rms_of(run(tone, -12.f, 0.f, false), 4800);
+    CHECK_NEAR(gm / base, 0.2512, 0.01);
+    // low-cut at 200 Hz: 50 Hz is attenuated by >= 20 dB, 2 kHz untouched
+    auto lo = sine_in(50, 0.3, n), hi = sine_in(2000, 0.3, n);
+    double lo0 = rms_of(run(lo, 0.f, 0.f, false), 9600), lo1 = rms_of(run(lo, 0.f, 200.f, false), 9600);
+    double hi0 = rms_of(run(hi, 0.f, 0.f, false), 9600), hi1 = rms_of(run(hi, 0.f, 200.f, false), 9600);
+    CHECK_MSG(20 * std::log10(lo0 / lo1) > 20.0, "50 Hz only %g dB down", 20 * std::log10(lo0 / lo1));
+    CHECK_NEAR(hi1 / hi0, 1.0, 0.02);
+    // DC offset: a constant 0.25 input decays to ~0 with DC removal; without it it stays
+    std::vector<float> dcv(n, 0.25f);
+    auto d0 = run(dcv, 0.f, 0.f, false), d1 = run(dcv, 0.f, 0.f, true);
+    CHECK_NEAR(d0[2 * (n - 10)], 0.25, 1e-6);
+    CHECK_MSG(std::fabs(d1[2 * (n - 10)]) < 0.005, "DC left %g", d1[2 * (n - 10)]);
+    // clip counter: full-scale samples are counted, a clean signal is not; reset works
+    bool clipped = false;
+    run(sine_in(1000, 0.5, 4800), 0.f, 0.f, false, &clipped); CHECK(!clipped);
+    run(sine_in(1000, 0.9, 4800), 6.f, 0.f, false, &clipped); CHECK(clipped);
+    EngineCore e(lib(), 48000); std::vector<float> hot(480, 1.0f), out(960);
+    e.set_monitor(true, 1.f); e.play(); render(e, out.data(), 480, hot.data(), 1);
+    CHECK(e.input_clip_count() == 480); e.reset_input_clips(); CHECK(e.input_clip_count() == 0);
+    // NaN/inf conditioning arguments are ignored safely
+    e.set_input_conditioning(NAN, INFINITY, true); render(e, out.data(), 480, hot.data(), 1);
+    for (float v : out) CHECK(std::isfinite(v));
+}
+
 static void test_offline_matches_live() {
     auto a = sine(40000, 2, 48000, 440, 0.3);
     std::string p = wav("off", a, 2, 48000);
@@ -490,6 +531,7 @@ int main() {
     RUN(test_count_in_and_metronome);
     RUN(test_recording_alignment_and_content);
     RUN(test_input_monitor_and_input_meter);
+    RUN(test_input_conditioning);
     RUN(test_offline_matches_live);
     RUN(test_loudness_via_engine);
     RUN(test_missing_and_bad_media);

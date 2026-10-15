@@ -6,6 +6,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -76,14 +77,17 @@ fun WaveStudioTheme(
     content: @Composable () -> Unit
 ) {
     val ctx = LocalContext.current
+    val useDynamic = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    // On a light background a pale accent has no contrast, so it is darkened there.
+    val accent = if (darkTheme) accentColor else androidx.compose.ui.graphics.lerp(accentColor, Color.Black, 0.35f)
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val base = if (darkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
-            base
-        }
+        useDynamic -> if (darkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)   // wallpaper colours win
         darkTheme -> DarkColorScheme
         else -> LightColorScheme
-    }.copy(primary = accentColor)
+    }.let { base ->
+        if (useDynamic) base
+        else base.copy(primary = accent, onPrimary = if (accent.luminance() > 0.45f) Color.Black else Color.White)
+    }
 
     val waveColors = WaveStudioColors(material = colorScheme)
     val view = LocalView.current
