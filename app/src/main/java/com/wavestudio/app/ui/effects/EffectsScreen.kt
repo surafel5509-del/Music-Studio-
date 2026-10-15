@@ -144,7 +144,7 @@ fun EffectOverviewPanel(
                 color = if (slot.enabled) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surface,
                 modifier = Modifier
-                    .offset { androidx.compose.ui.IntOffset(ox.toInt(), oy.toInt()) }
+                    .offset(x = ox.dp, y = oy.dp)
                     .width(150.dp).height(90.dp)
                     .pointerInput(Unit) {
                         detectDragGestures { change, drag ->
