@@ -2,9 +2,9 @@
 #include "effect.h"
 #include <vector>
 namespace wavestudio {
-class Delay : public Effect {
+class StereoDelay : public Effect {
 public:
-    Delay();
+    StereoDelay();
     const char* name() const override { return "Delay"; }
     void set_sample_rate(float sr) override;
     void reset() override;

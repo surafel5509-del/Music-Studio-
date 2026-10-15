@@ -2,10 +2,10 @@
 #include <cmath>
 #include <cstring>
 namespace wavestudio {
-Delay::Delay() { params_={{"time","Time",20,2000,400,400,"ms"},{"feedback","Feedback",0,90,30,30,"%"},{"mix","Mix",0,100,35,35,"%"}}; }
-void Delay::set_sample_rate(float sr){ Effect::set_sample_rate(sr); dl_[0].ensure((int)(sr*2.5)); dl_[1].ensure((int)(sr*2.5)); }
-void Delay::reset(){ dl_[0]=Dline(); dl_[1]=Dline(); set_sample_rate(sample_rate_); }
-void Delay::process(float** b,int nf,int nc){
+StereoDelay::StereoDelay() { params_={{"time","Time",20,2000,400,400,"ms"},{"feedback","Feedback",0,90,30,30,"%"},{"mix","Mix",0,100,35,35,"%"}}; }
+void StereoDelay::set_sample_rate(float sr){ Effect::set_sample_rate(sr); dl_[0].ensure((int)(sr*2.5)); dl_[1].ensure((int)(sr*2.5)); }
+void StereoDelay::reset(){ dl_[0]=Dline(); dl_[1]=Dline(); set_sample_rate(sample_rate_); }
+void StereoDelay::process(float** b,int nf,int nc){
     float dly=params_[0].value*0.001f*sample_rate_, fb=params_[1].value/100.f*0.85f, wet=params_[2].value/100.f;
     for(int c=0;c<nc;++c){
         auto& d=dl_[c<2?c:0];

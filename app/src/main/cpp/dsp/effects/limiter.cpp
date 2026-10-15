@@ -2,10 +2,10 @@
 #include <cmath>
 #include <algorithm>
 namespace wavestudio {
-Limiter::Limiter(){params_={{"ceiling","Ceiling",-6,0,-0.5f,-0.5f,"dB"},{"release","Release",10,500,100,100,"ms"},{"gain","Gain",-12,12,0,0,"dB"}};}
-void Limiter::set_sample_rate(float sr){Effect::set_sample_rate(sr);}
-void Limiter::reset(){peak_=0;}
-void Limiter::process(float**b,int nf,int nc){
+BrickwallLimiter::BrickwallLimiter(){params_={{"ceiling","Ceiling",-6,0,-0.5f,-0.5f,"dB"},{"release","Release",10,500,100,100,"ms"},{"gain","Gain",-12,12,0,0,"dB"}};}
+void BrickwallLimiter::set_sample_rate(float sr){Effect::set_sample_rate(sr);}
+void BrickwallLimiter::reset(){peak_=0;}
+void BrickwallLimiter::process(float**b,int nf,int nc){
  float thr=db_to_linear(params_[0].value),inG=db_to_linear(params_[2].value);
  float relCoef=powf(0.1f,1.f/(sample_rate_*params_[1].value*0.001f));
  for(int c=0;c<nc;++c)for(int i=0;i<nf;++i){
