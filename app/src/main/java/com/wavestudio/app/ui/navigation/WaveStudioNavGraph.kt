@@ -14,6 +14,9 @@ import com.wavestudio.app.ui.mixer.MixerScreen
 import com.wavestudio.app.ui.plugins.PluginsScreen
 import com.wavestudio.app.ui.projects.ProjectsScreen
 import com.wavestudio.app.ui.settings.SettingsScreen
+import com.wavestudio.app.ui.voice.VoiceToolsScreen
+import com.wavestudio.app.ui.piano.PianoBeatScreen
+import com.wavestudio.app.engine.NativeAudioEngine
 
 @Composable
 fun WaveStudioNavGraph(navController: NavHostController) {
@@ -68,6 +71,14 @@ fun WaveStudioNavGraph(navController: NavHostController) {
         }
         composable(AppDestinations.FileBrowser.route) {
             FileBrowserScreen(onBack = { navController.popBackStack() })
+        }
+        composable(AppDestinations.Voice.route) {
+            val eng = remember { com.wavestudio.app.engine.NativeAudioEngine() }
+            VoiceToolsScreen(engine = eng)
+        }
+        composable(AppDestinations.Piano.route) {
+            val eng = remember { com.wavestudio.app.engine.NativeAudioEngine() }
+            PianoBeatScreen(engine = eng)
         }
     }
 }

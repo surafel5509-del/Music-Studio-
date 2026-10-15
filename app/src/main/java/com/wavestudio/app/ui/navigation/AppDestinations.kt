@@ -16,4 +16,6 @@ sealed class AppDestinations(val route: String) {
         fun createRoute(trackId: Int) = "effects/$trackId"
     }
     object FileBrowser : AppDestinations("filebrowser")
+    object Voice : AppDestinations("voice")
+    object Piano : AppDestinations("piano")
 }
