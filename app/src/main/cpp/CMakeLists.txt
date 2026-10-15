@@ -15,13 +15,6 @@ set(WS_ENGINE_SOURCES
         dsp/effects/eq.cpp
         dsp/effects/compressor.cpp
         dsp/effects/reverb.cpp
-        dsp/effects/delay.cpp
-        dsp/effects/chorus_flanger_phaser.cpp
-        dsp/effects/filter.cpp
-        dsp/effects/limiter.cpp
-        dsp/effects/noise_gate.cpp
-        dsp/effects/bitcrusher.cpp
-        dsp/effects/deesser.cpp
         dsp/effects/distortion.cpp
         dsp/effects/pitch_shift.cpp
         dsp/analysis/spectrum.cpp
